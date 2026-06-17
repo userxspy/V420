@@ -19,8 +19,7 @@ async def actors_directory_page(req):
     h = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:20px;">'
     for act in all_actors:
         aid = str(act["_id"])
-        ts = int(act.get("created_at") or time.time())
-        h += f'<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;cursor:pointer;" onclick="location.href=\'/actor/{aid}\'"><div style="position:relative;padding-top:135%;background:var(--bg3);"><img src="/api/actor/photo?id={aid}&t={ts}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;"></div><div style="padding:12px;text-align:center;font-size:14px;font-weight:700;color:var(--text);text-overflow:ellipsis;overflow:hidden;white-space:nowrap;">{html.escape(act.get("name",""))}</div></div>'
+        h += f'<div style="background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden;cursor:pointer;" onclick="location.href=\'/actor/{aid}\'"><div style="position:relative;padding-top:135%;background:var(--bg3);"><img src="/api/actor/photo?id={aid}&t={int(act.get("created_at",0))}" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;"></div><div style="padding:12px;text-align:center;font-size:14px;font-weight:700;color:var(--text);text-overflow:ellipsis;overflow:hidden;white-space:nowrap;">{html.escape(act.get("name",""))}</div></div>'
     h += '</div>' if all_actors else '<div style="color:var(--muted);text-align:center;padding:60px 20px;">🎭 No star profiles created yet.</div>'
 
     body = f'<div class="main" style="padding-top:30px;max-width:1100px;margin:0 auto;padding-left:20px;padding-right:20px;"><div style="margin-bottom:20px;"><h1 style="font-size:28px;font-weight:900;color:var(--text);margin-bottom:4px;">🎭 Actors Catalog</h1><p style="color:var(--muted);font-size:14px;">Browse star profiles and content grids.</p></div>{admin_btn}{h}</div>'
@@ -67,13 +66,13 @@ async def actor_profile_display(req):
         if not act: return web.Response(text="Not Found", status=404)
     except: return web.Response(text="Invalid ID", status=400)
     
+    act_name = act.get("name", "") # ✅ फिक्स: नेमएरर (NameError) को जड़ से मिटाया गया
     social = act.get("social_links", {})
     gallery_list = act.get("gallery", [])
     t_payload = html.escape(json.dumps(act.get("tags", [])))
-    ts = int(act.get("created_at") or time.time())
     
     chips = "".join([f'<span style="background:var(--bg3);border:1px solid var(--border);color:var(--muted);font-size:11px;padding:3px 8px;border-radius:4px;font-weight:600;">#{html.escape(t)}</span>' for t in act.get("tags",[])])
-    soc_html = "".join([f'<a href="{html.escape(social[k])}" target="_blank" style="background:{"#ff007f" if k=="instagram" else "#ff0000" if k=="youtube" else "#1da1f2"};color:#fff;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:700;margin-items:center;">{"📸 Instagram" if k=="instagram" else "📺 YouTube" if k=="youtube" else "🐦 Twitter"}</a>' for k in ["instagram","youtube","twitter"] if social.get(k)])
+    soc_html = "".join([f'<a href="{html.escape(social[k])}" target="_blank" style="background:{"#ff007f" if k=="instagram" else "#ff0000" if k=="youtube" else "#1da1f2"};color:#fff;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:12px;font-weight:700;">{"📸 Instagram" if k=="instagram" else "📺 YouTube" if k=="youtube" else "🐦 Twitter"}</a>' for k in ["instagram","youtube","twitter"] if social.get(k)])
     
     gal_html = f'<div style="background:var(--card);border:1px dashed var(--border);padding:20px;border-radius:8px;text-align:center;margin-bottom:20px;"><form action="/api/actor/gallery_upload" method="post" enctype="multipart/form-data"><input type="hidden" name="actor_id" value="{aid}"><label style="background:var(--accent);color:#fff;padding:10px 20px;border-radius:6px;font-weight:700;cursor:pointer;font-size:13px;display:inline-block;">📂 Add Image to Gallery<input type="file" name="gallery_img" accept="image/*" style="display:none;" onchange="this.form.submit()"></label></form></div>' if role=='admin' else ""
     if gallery_list:
@@ -100,12 +99,11 @@ async def actor_profile_display(req):
         .gallery-item-wrap {{ position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--border);aspect-ratio:1;cursor:pointer; }}
         .gallery-item {{ width:100%;height:100%;object-fit:cover; }}
         
-        /* ✅ डिलीट बटन को हमेशा विज़िबल और रिस्पॉन्सिव लुक में लाया गया */
-        .gallery-del-btn {{ position:absolute;bottom:6px;left:50%;transform:translateX(-50%);background:rgba(160,8,8,.92);border:1.5px solid var(--accent);color:#fff;padding:4px 12px;border-radius:6px;font-size:10px;font-weight:800;cursor:pointer;z-index:5;box-shadow:0 4px 10px rgba(0,0,0,0.5); }}
-        .gallery-del-btn:hover {{ background:var(--accent); }}
+        /* ✅ सीएसएस क्लास फिक्स: डिलीट बटन अब पूरी तरह से दिखाई देगा */
+        .gallery-del-btn {{ position:absolute;bottom:8px;left:50%;transform:translateX(-50%);background:rgba(160,8,8,.9);border:1px solid var(--accent);color:#fff;padding:4px 10px;border-radius:4px;font-size:10px;font-weight:700;cursor:pointer;z-index:5; }}
         
         .lightbox {{ position:fixed;inset:0;background:rgba(0,0,0,.92);backdrop-filter:blur(15px);z-index:99999;display:none;align-items:center;justify-content:center;opacity:0;transition:opacity .2s; }}
-        .lightbox.open {{ display:flex; opacity:1; }}
+        .lightbox.open {{ display:flex;opacity:1; }}
         .lightbox-img {{ max-width:92%;max-height:88vh;object-fit:contain;border-radius:6px; }}
         .lightbox-close {{ position:absolute;top:20px;right:25px;background:none;border:none;color:#fff;font-size:32px;cursor:pointer; }}
 
@@ -152,10 +150,10 @@ async def actor_profile_display(req):
         <div style="margin-bottom:15px;"><a href="/actors" style="color:var(--muted);text-decoration:none;font-size:14px;font-weight:700;">← Back to Catalog</a></div>
         <div style="display:flex;gap:25px;background:var(--card);border:1px solid var(--border);padding:25px;border-radius:12px;margin-bottom:35px;flex-wrap:wrap;">
             <div style="width:160px;height:220px;background:var(--bg3);border-radius:8px;overflow:hidden;border:1px solid var(--border);flex-shrink:0;">
-                <img id="actorMasterAvatarImage" src="/api/actor/photo?id={aid}&t={ts}" style="width:100%;height:100%;object-fit:cover;">
+                <img id="actorMasterAvatarImage" src="/api/actor/photo?id={aid}&t={int(act.get("created_at",0))}" style="width:100%;height:100%;object-fit:cover;">
             </div>
             <div style="flex:1;min-width:300px;display:flex;flex-direction:column;justify-content:center;">
-                <h1 style="font-size:32px;font-weight:900;color:var(--text);margin-bottom:2px;">{html.escape(actor_name)}</h1>
+                <h1 style="font-size:32px;font-weight:900;color:var(--text);margin-bottom:2px;">{html.escape(act_name)}</h1>
                 <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">{chips}</div>
                 <div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap;">{soc_html}</div>
                 {adm_act}
@@ -213,7 +211,7 @@ async def actor_profile_display(req):
             <form action="/api/actor/update_profile" method="post">
                 <input type="hidden" name="actor_id" value="{aid}">
                 <div class="scard-label">Actor Full Name</div>
-                <input type="text" name="name" value="{html.escape(actor_name)}" class="em-input" style="width:100%;background:var(--bg);border:1px solid var(--border);padding:12px;color:var(--text);margin-bottom:15px;border-radius:6px;" required>
+                <input type="text" name="name" value="{html.escape(act_name)}" class="em-input" style="width:100%;background:var(--bg);border:1px solid var(--border);padding:12px;color:var(--text);margin-bottom:15px;border-radius:6px;" required>
                 <div class="scard-label">Biography Details</div>
                 <textarea name="bio" class="em-input" style="width:100%;background:var(--bg);border:1px solid var(--border);min-height:120px;font-family:inherit;padding:10px;line-height:1.5;color:var(--text);margin-bottom:15px;border-radius:6px;" required>{safe_bio}</textarea>
                 <div class="scard-label">Search Tags (Comma Separated)</div>
@@ -231,7 +229,7 @@ async def actor_profile_display(req):
     </div>
 
     <script>
-        var actCurPage=1, actOffset=0, actNextOffset="", actLimit=21, actorDefaultName="{html.escape(actor_name)}", actCol="all", actMode="tg";
+        var actCurPage=1, actOffset=0, actNextOffset="", actLimit=21, actorDefaultName="{html.escape(act_name)}", actCol="all", actMode="tg";
         function closeActorCdds(){{ document.getElementById('cddColMenuActor').style.display='none';document.getElementById('cddColBtnActor').classList.remove('open');document.getElementById('cddModeMenuActor').style.display='none';document.getElementById('cddModeBtnActor').classList.remove('open'); }}
         function toggleActorCdd(w,e){{ if(e)e.stopPropagation(); var mId=w==='col'?'cddColMenuActor':'cddModeMenuActor', bId=w==='col'?'cddColBtnActor':'cddModeBtnActor', oId=w==='col'?'cddModeMenuActor':'cddColMenuActor', obId=w==='col'?'cddModeBtnActor':'cddColBtnActor'; document.getElementById(oId).style.display='none';document.getElementById(obId).classList.remove('open'); var m=document.getElementById(mId), b=document.getElementById(bId); if(m.style.display==='block') {{ m.style.display='none';b.classList.remove('open'); }} else {{ m.style.display='block';b.classList.add('open'); }} }}
         function pickActorCol(v,l,el,e){{ if(e)e.stopPropagation(); actCol=v;document.getElementById('cddColLabelActor').textContent=l;document.querySelectorAll('#cddColMenuActor .cdd-item-actor').forEach(function(i){{i.classList.remove('selected');}});el.classList.add('selected');closeActorCdds();resetActorSearchPage();triggerActorSearchAjax(); }}
@@ -286,7 +284,7 @@ async def actor_profile_display(req):
         document.getElementById('actor_movie_q').addEventListener('keydown',function(e){{if(e.key==='Enter'){{resetActorSearchPage();triggerActorSearchAjax();}}}});
     </script>
     '''
-    return build_page(f"{actor_name} - Profile Matrix", tab_engine_ui, "", "actors", role)
+    return build_page(f"{act_name} - Profile Matrix", tab_engine_ui, "", "actors", role)
 
 @actor_routes.get('/api/actor/search')
 async def api_actor_search_handler(req):
