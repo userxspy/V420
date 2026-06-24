@@ -13,9 +13,6 @@ class SmartStreamer:
     यह क्लास Telegram सर्वर से सीधा संपर्क करती है और वीडियो के बाइट्स (Bytes) को
     बिना सर्वर की RAM भरे सीधे यूज़र के ब्राउज़र तक पहुँचाती है (Dynamic Chunking)।
     """
-    
-    def __init__(self):
-        self.main_bot = temp.BOT
 
     async def get_file_properties(self, msg) -> FileId:
         """मैसेज से फाइल की प्रॉपर्टीज (File ID) निकालता है"""
@@ -79,23 +76,19 @@ class SmartStreamer:
 
     # 🚀 SMART DYNAMIC CHUNKING (Zero RAM Overhead)
     async def stream_file(self, msg, start_byte: int, end_byte: int):
-        """
-        यह फंक्शन बाइट्स को चंक्स में मंगाता है। 
-        पहला चंक छोटा (128KB) होता है ताकि वीडियो 1 सेकंड में प्ले हो जाए, 
-        फिर यह 1MB तक बढ़ जाता है ताकि बफरिंग न हो।
-        """
         file_props = await self.get_file_properties(msg)
-        ms = await self.generate_media_session(self.main_bot, file_props)
+        
+        # ✅ FIX: यहाँ self.main_bot की जगह सीधा temp.BOT का इस्तेमाल किया गया है
+        ms = await self.generate_media_session(temp.BOT, file_props)
+        
         loc = await self.get_location(file_props)
 
         current_offset = start_byte
-        # स्टार्ट फास्ट प्लेबैक के लिए 128KB, बाद में 1MB (1048576) तक जाएगा
         chunk_size = 1024 * 128 
         max_chunk = 1024 * 1024 
 
         try:
             while current_offset <= end_byte:
-                # Telegram की शर्त: Offset हमेशा 4096 से कटना (divide) चाहिए
                 aligned_offset = current_offset - (current_offset % 4096)
                 bytes_needed = end_byte - current_offset + 1
                 
@@ -111,7 +104,6 @@ class SmartStreamer:
                 if not isinstance(r, raw.types.upload.File) or not r.bytes:
                     break
 
-                # Aligned offset की वजह से जो एक्स्ट्रा बाइट्स आ गए हैं, उन्हें काटना
                 start_cut = current_offset - aligned_offset
                 end_cut = start_cut + min(bytes_needed, len(r.bytes) - start_cut)
                 
@@ -122,7 +114,6 @@ class SmartStreamer:
                 yield chunk
                 current_offset += len(chunk)
                 
-                # स्पीड स्टेबल होने पर चंक साइज़ बढ़ा दें ताकि सर्वर और Telegram पर रिक्वेस्ट लोड कम हो
                 if chunk_size < max_chunk:
                     chunk_size = min(max_chunk, chunk_size * 2)
                     
