@@ -1,699 +1,460 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Fast Finder – Admin Panel</title>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;900&display=swap" rel="stylesheet">
-<style>
-/* ── EXACT web_assets.py CSS VARIABLES ── */
-*{box-sizing:border-box;margin:0;padding:0}
-:root{
-  --bg:#0a0a0c;--bg2:#111116;--bg3:#1d1d26;--bg4:#2a2a38;
-  --accent:#e50914;--accent-hover:#b30710;
-  --text:#ffffff;--muted:#a0a0b0;--border:#262636;--card:#14141f;
-}
-.light{
-  --bg:#f4f5f7;--bg2:#ffffff;--bg3:#eef0f4;--bg4:#dbdee6;
-  --text:#0a0a0c;--muted:#62627a;--border:#d2d5df;--card:#ffffff;
-}
+import io, gc, time, html, re
+import asyncio
+import aiohttp
+import orjson
+from aiohttp import web
+from bson.objectid import ObjectId
+from utils import temp
+from info import THUMBNAIL_STORAGE_CHANNEL
+from database.users_chats_db import db as motor_db
+from web.web_assets import build_page, get_auth, form_wrapper
 
-body{
-  font-family:'DM Sans',sans-serif;
-  background:var(--bg);
-  color:var(--text);
-  min-height:100vh;
-  overflow-x:hidden;
-  transition:background .2s,color .2s;
-}
+post_routes = web.RouteTableDef()
+posts_col = motor_db.db["Posts"]
 
-/* ── TOPBAR ── */
-.topbar{
-  background:var(--bg2);padding:0 4%;
-  display:flex;align-items:center;height:68px;
-  position:sticky;top:0;z-index:100;gap:15px;
-  box-shadow:0 4px 20px rgba(0,0,0,0.4);
-  border-bottom:1px solid var(--border);
-}
-.ham-btn{background:none;border:none;cursor:pointer;color:var(--text);display:flex;flex-direction:column;gap:5px;padding:6px;}
-.ham-line{width:22px;height:2px;background:currentColor;transition:.2s;display:block;}
-.logo{font-size:18px;font-weight:900;letter-spacing:1px;color:var(--accent);display:flex;align-items:center;gap:8px;text-decoration:none;flex:1;}
-.nf-icon{background:var(--accent);color:#fff;padding:2px 7px;border-radius:3px;font-size:18px;line-height:1;}
-.theme-btn{margin-left:auto;background:none;border:1px solid var(--border);border-radius:4px;padding:6px 14px;font-size:12px;font-weight:700;color:var(--text);cursor:pointer;font-style:italic;transition:.15s;}
-.theme-btn:hover{background:var(--bg3);}
+# ─────────────────────────────────────────────────────────
+# ⚡ ULTRA-FAST ORJSON DUMP FUNCTION
+# ─────────────────────────────────────────────────────────
+def fast_json(data):
+    return orjson.dumps(data).decode('utf-8')
 
-/* ── SIDEBAR ── */
-.sidebar-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:150;opacity:0;pointer-events:none;transition:.2s;}
-.sidebar-overlay.open{opacity:1;pointer-events:all;}
-.sidebar{position:fixed;top:0;left:0;height:100%;width:260px;background:var(--bg2);border-right:1px solid var(--border);z-index:160;display:flex;flex-direction:column;transform:translateX(-100%);transition:.3s;}
-.sidebar.open{transform:translateX(0);}
-.sb-header{padding:20px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;}
-.sb-logo{font-size:14px;font-weight:900;color:var(--accent);display:flex;align-items:center;gap:8px;}
-.sb-close{background:none;border:none;color:var(--muted);font-size:22px;cursor:pointer;}
-.sb-nav{padding:15px 10px;flex:1;}
-.sb-section{font-size:11px;font-weight:700;color:var(--muted);padding:8px 12px;letter-spacing:1px;text-transform:uppercase;}
-.sb-link{display:flex;align-items:center;gap:10px;padding:12px 15px;border-radius:4px;text-decoration:none;color:var(--muted);font-size:15px;font-weight:500;margin-bottom:4px;transition:.15s;}
-.sb-link:hover{background:var(--bg3);color:var(--text);}
-.sb-link.active{background:var(--accent);color:#fff;}
-.sb-footer{padding:15px 10px;border-top:1px solid var(--border);}
-.sb-logout{display:block;padding:12px;border-radius:4px;text-align:center;text-decoration:none;color:var(--text);font-weight:700;border:1px solid var(--border);transition:.15s;}
-.sb-logout:hover{background:var(--bg3);}
+# ─────────────────────────────────────────────────────────
+# 🛠️ ImgBB Auto-Converter Helper Functions
+# ─────────────────────────────────────────────────────────
+async def fetch_direct_ibb_url(session, url):
+    url = url.strip()
+    if not url: return None
+    if "ibb.co" in url and "i.ibb.co" not in url:
+        try:
+            async with session.get(url, timeout=5) as resp:
+                if resp.status == 200:
+                    html_content = await resp.text()
+                    match = re.search(r'<meta property="og:image" content="([^"]+)"', html_content)
+                    if match: return match.group(1)
+        except Exception: pass
+    return url
 
-/* ── PAGE LAYOUT ── */
-.page-wrap{padding:24px 4% 60px;max-width:880px;margin:0 auto;}
-.page-header{display:flex;align-items:center;gap:14px;margin-bottom:24px;}
-.back-link{background:var(--bg3);border:1px solid var(--border);color:var(--muted);padding:9px 16px;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:4px;transition:.15s;}
-.back-link:hover{background:var(--bg4);color:var(--text);}
-.page-title{font-size:26px;font-weight:900;color:var(--text);}
+async def convert_all_ibb_links(urls):
+    async with aiohttp.ClientSession() as session:
+        tasks = [fetch_direct_ibb_url(session, u) for u in urls if u.strip()]
+        results = await asyncio.gather(*tasks)
+        return [r for r in results if r]
 
-/* ── TAB SWITCHER ── */
-.tab-switcher{display:flex;gap:8px;margin-bottom:22px;}
-.sw-tab{flex:1;background:var(--card);border:1px solid var(--border);padding:12px;border-radius:8px;font-size:12px;font-weight:800;text-align:center;cursor:pointer;color:var(--muted);letter-spacing:.5px;text-transform:uppercase;transition:.2s;}
-.sw-tab:hover:not(.active){background:var(--bg3);color:var(--text);}
-.sw-tab.active{background:var(--accent);border-color:var(--accent);color:#fff;}
+# ─────────────────────────────────────────────────────────
+# 📝 1. ADMIN ROUTE: CREATE POST WIZARD (UI)
+# ─────────────────────────────────────────────────────────
+@post_routes.get('/admin/create_post')
+async def create_post_page(req):
+    role, _ = await get_auth(req)
+    if role != 'admin': return web.HTTPFound('/dashboard')
+    
+    html_content = '''
+    <style>
+        .em-input { width:100%; background:var(--bg); border:1px solid var(--border); padding:12px; color:var(--text); margin-bottom:15px; border-radius:6px; outline:none; font-family:inherit; }
+        .em-input:focus { border-color:var(--accent); }
+        .scard-label { font-size:13px; font-weight:700; color:var(--muted); margin-bottom:8px; text-transform:uppercase; letter-spacing:1px; }
+        .step-box { background:var(--card); border:1px solid var(--border); padding:25px; border-radius:12px; margin-bottom:20px; box-shadow:0 8px 25px rgba(0,0,0,0.2); }
+    </style>
 
-/* ── STEP CARDS ── */
-.step-box{background:var(--card);border:1px solid var(--border);padding:24px;border-radius:12px;margin-bottom:18px;box-shadow:0 8px 25px rgba(0,0,0,.2);}
-.step-box.accent-box{border-color:var(--accent);}
-.step-header{display:flex;align-items:center;gap:12px;margin-bottom:20px;padding-bottom:14px;border-bottom:1px solid var(--border);}
-.step-num{width:30px;height:30px;border-radius:50%;background:var(--bg4);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:900;color:var(--text);flex-shrink:0;}
-.step-num.red{background:var(--accent);color:#fff;}
-.step-title{font-size:13px;font-weight:900;color:var(--text);letter-spacing:1px;text-transform:uppercase;}
-.step-title.red{color:var(--accent);}
+    <div class="main" style="max-width:850px; margin:30px auto; padding:0 20px;">
+        <h2 style="font-size:28px; font-weight:900; margin-bottom:25px; color:var(--text); display:flex; justify-content:space-between; align-items:center;">
+            <span>📝 Create New Post</span>
+            <a href="/posts" style="font-size:14px; font-weight:700; color:var(--muted); text-decoration:none;">← Back to Posts</a>
+        </h2>
+        
+        <form action="/api/post/publish" method="post" enctype="multipart/form-data">
+            <div class="step-box">
+                <div class="scard-label">1. Post Title</div>
+                <input type="text" name="title" placeholder="e.g. Panchayat S03 or Pushpa 2" class="em-input" required>
+                <div class="scard-label" style="margin-top:10px;">2. Short Description</div>
+                <textarea name="description" placeholder="Write a short description..." class="em-input" style="min-height:120px;" required></textarea>
+                <div class="scard-label" style="margin-top:10px;">3. Search Tags (Comma Separated)</div>
+                <input type="text" name="tags" placeholder="e.g. Action, Web Series, 2024" class="em-input">
+            </div>
 
-/* ── FORM ELEMENTS (exact web_assets .em-input) ── */
-.scard-label{font-size:12px;font-weight:700;color:var(--muted);margin-bottom:8px;text-transform:uppercase;letter-spacing:1px;display:block;}
-.em-input{width:100%;background:var(--bg);border:1px solid var(--border);padding:12px 14px;color:var(--text);margin-bottom:15px;border-radius:6px;outline:none;font-family:'DM Sans',sans-serif;font-size:14px;transition:border-color .2s;}
-.em-input:focus{border-color:var(--accent);}
-textarea.em-input{min-height:110px;resize:vertical;line-height:1.6;}
-.em-input::placeholder{color:var(--muted);}
+            <div class="step-box">
+                <div class="scard-label">4. Cover Image</div>
+                <input type="text" name="cover_url" placeholder="Paste ibb.co Link (Viewer or Direct)" class="em-input" style="margin-bottom:10px;">
+                <div style="text-align:center; color:var(--muted); margin-bottom:10px; font-weight:800; font-size:12px;">OR UPLOAD FILE</div>
+                <input type="file" name="cover_file" accept="image/*" class="em-input" style="padding:8px;">
+            </div>
 
-/* ── DIVIDER ── */
-.divider-or{text-align:center;color:var(--muted);font-size:11px;font-weight:800;letter-spacing:1px;margin:12px 0;position:relative;}
-.divider-or::before,.divider-or::after{content:'';position:absolute;top:50%;height:1px;background:var(--border);}
-.divider-or::before{left:0;width:calc(50% - 70px);}
-.divider-or::after{right:0;width:calc(50% - 70px);}
+            <div class="step-box">
+                <div class="scard-label">5. Screenshots (Multiple)</div>
+                <textarea name="screenshot_urls" placeholder="Paste ibb.co links line by line..." class="em-input" style="min-height:100px; white-space:pre-wrap; margin-bottom:10px;"></textarea>
+                <div style="text-align:center; color:var(--muted); margin-bottom:10px; font-weight:800; font-size:12px;">AND / OR UPLOAD FILES</div>
+                <input type="file" name="screenshot_files" accept="image/*" multiple class="em-input" style="padding:8px;">
+            </div>
 
-/* ── UPLOAD BUTTON ── */
-.em-upload-btn{display:flex;align-items:center;gap:12px;background:var(--bg4);border:1px dashed var(--border);padding:14px 16px;border-radius:8px;cursor:pointer;font-weight:700;font-size:13px;color:var(--text);transition:.2s;width:100%;margin-top:10px;}
-.em-upload-btn:hover{background:var(--bg3);border-color:var(--muted);}
-.upload-icon-box{width:36px;height:36px;background:var(--bg3);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;}
-.upload-label-main{font-size:14px;font-weight:700;}
-.upload-label-sub{font-size:11px;color:var(--muted);margin-top:2px;font-weight:400;}
+            <div class="step-box" style="border-color:var(--accent);">
+                <div class="scard-label" style="color:var(--accent);">6. Add Videos / Episodes</div>
+                <div style="display:flex; gap:10px; margin-bottom:10px;">
+                    <input type="text" id="videoSearchInput" placeholder="Search database for files..." class="em-input" style="margin-bottom:0;" onkeydown="if(event.key==='Enter'){ event.preventDefault(); searchVideosForPost(); }">
+                    <button type="button" onclick="searchVideosForPost()" style="background:var(--accent); color:#fff; border:none; padding:0 24px; border-radius:6px; font-weight:800; cursor:pointer;">Search</button>
+                </div>
+                
+                <div id="videoSearchResults" style="background:var(--bg2); border:1px solid var(--border); border-radius:6px; max-height:250px; overflow-y:auto; display:none; margin-bottom:20px; box-shadow:0 4px 15px rgba(0,0,0,0.5);"></div>
+                
+                <div class="scard-label">Selected Videos / Episodes:</div>
+                <div id="selectedVideosContainer" style="display:flex; flex-direction:column; gap:10px; min-height:50px; padding:10px; background:var(--bg); border-radius:8px; border:1px dashed var(--border);"></div>
+            </div>
 
-/* ── COVER PREVIEW GRID ── */
-.cover-preview-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;}
-.cover-thumb{position:relative;background:var(--bg3);border-radius:8px;overflow:hidden;aspect-ratio:1;border:1px solid var(--border);}
-.cover-thumb-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
-.cover-thumb-label{position:absolute;bottom:0;left:0;right:0;text-align:center;font-size:12px;font-weight:800;color:#fff;background:rgba(0,0,0,.65);padding:7px;}
-
-/* ── VIDEO SEARCH ── */
-.search-row{display:flex;gap:8px;margin-bottom:12px;}
-.search-row .em-input{margin-bottom:0;flex:1;}
-.search-btn{background:var(--accent);color:#fff;border:none;padding:0 22px;border-radius:6px;font-size:14px;font-weight:800;cursor:pointer;white-space:nowrap;transition:.15s;font-family:'DM Sans',sans-serif;}
-.search-btn:hover{background:var(--accent-hover);}
-.search-btn:active{transform:scale(.96);}
-
-/* ── SEARCH RESULTS DROPDOWN ── */
-.search-results{background:var(--bg2);border:1px solid var(--border);border-radius:6px;max-height:220px;overflow-y:auto;display:none;margin-bottom:14px;box-shadow:0 4px 15px rgba(0,0,0,.5);}
-.search-result-item{padding:12px 15px;border-bottom:1px solid var(--border);cursor:pointer;transition:.15s;}
-.search-result-item:last-child{border-bottom:none;}
-.search-result-item:hover{background:var(--bg3);}
-.sri-name{font-weight:700;font-size:13px;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.sri-size{font-size:11px;color:var(--muted);margin-top:3px;}
-.sri-size span{background:var(--bg4);padding:2px 6px;border-radius:4px;font-weight:600;}
-
-/* ── SELECTED VIDEOS ── */
-.selected-vids-wrap{display:flex;flex-direction:column;gap:10px;min-height:60px;}
-.selected-vids-empty{min-height:60px;display:flex;align-items:center;justify-content:center;background:var(--bg);border:1px dashed var(--border);border-radius:8px;padding:16px;}
-.no-vids-msg{color:var(--muted);font-size:13px;font-weight:600;text-align:center;}
-.vid-entry{background:var(--card);border:1px solid var(--accent);padding:15px;border-radius:8px;display:flex;gap:14px;align-items:flex-start;}
-.vid-entry-info{flex:1;min-width:0;}
-.vid-entry-fname{font-size:11px;color:var(--muted);margin-bottom:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.vid-remove-btn{background:rgba(160,8,8,.78);color:#fff;border:none;padding:10px 14px;border-radius:6px;cursor:pointer;font-weight:700;flex-shrink:0;font-size:14px;transition:.15s;}
-.vid-remove-btn:hover{background:var(--accent);}
-
-/* ── SUBMIT BUTTON ── */
-.submit-btn{width:100%;background:var(--accent);color:#fff;border:none;padding:17px;border-radius:8px;font-weight:700;font-size:16px;cursor:pointer;box-shadow:0 8px 25px rgba(229,9,20,.4);transition:.2s;font-family:'DM Sans',sans-serif;font-style:italic;letter-spacing:.5px;margin-top:4px;}
-.submit-btn:hover{background:var(--accent-hover);transform:translateY(-1px);box-shadow:0 12px 30px rgba(229,9,20,.5);}
-.submit-btn:active{transform:scale(.98);}
-
-/* ── TOAST (exact web_assets) ── */
-.toast{position:fixed;bottom:20px;right:20px;background:var(--accent);color:#fff;padding:12px 20px;border-radius:4px;font-weight:700;z-index:300;transform:translateX(150%);transition:.3s;font-size:13px;max-width:280px;}
-.toast.show{transform:translateX(0);}
-.toast.error{background:#000;border:1px solid var(--accent);}
-
-/* ── SUCCESS / ERROR BOXES (form_wrapper style) ── */
-.err-box{background:#e87c03;color:#fff;padding:10px 20px;border-radius:4px;margin-bottom:16px;font-size:14px;font-weight:600;}
-.success-box{background:#28a745;color:#fff;padding:10px 20px;border-radius:4px;margin-bottom:16px;font-size:14px;font-weight:600;}
-
-/* ── RESPONSIVE ── */
-@media(max-width:600px){
-  .page-wrap{padding:16px 4% 60px;}
-  .page-title{font-size:20px;}
-  .step-box{padding:16px;}
-  .cover-preview-grid{grid-template-columns:1fr 1fr;}
-}
-
-/* ── TAB VISIBILITY ── */
-#tab-create, #tab-edit{display:none;}
-#tab-create.show, #tab-edit.show{display:block;}
-</style>
-</head>
-<body>
-
-<!-- ── SIDEBAR OVERLAY ── -->
-<div class="sidebar-overlay" id="sbOverlay" onclick="closeSidebar()"></div>
-
-<!-- ── SIDEBAR ── -->
-<div class="sidebar" id="sidebar">
-  <div class="sb-header">
-    <div class="sb-logo"><span class="nf-icon">F</span> FAST FINDER</div>
-    <button class="sb-close" onclick="closeSidebar()">&#10005;</button>
-  </div>
-  <nav class="sb-nav">
-    <div class="sb-section">Menu</div>
-    <a href="/dashboard" class="sb-link">🏠 Home</a>
-    <a href="/posts"     class="sb-link active">📝 Posts</a>
-    <a href="/actors"    class="sb-link">🎭 Actors</a>
-    <a href="/stats"     class="sb-link">📊 Database Stats</a>
-    <a href="/profile"   class="sb-link">⚙️ Profile Settings</a>
-  </nav>
-  <div class="sb-footer">
-    <a href="/logout" class="sb-logout">Sign Out</a>
-  </div>
-</div>
-
-<!-- ── TOPBAR ── -->
-<div class="topbar">
-  <button class="ham-btn" id="hamBtn" onclick="openSidebar()">
-    <span class="ham-line"></span>
-    <span class="ham-line"></span>
-    <span class="ham-line"></span>
-  </button>
-  <a class="logo" href="/dashboard"><span class="nf-icon">F</span> FAST FINDER</a>
-  <button class="theme-btn" onclick="toggleThemeFixed()">Theme</button>
-</div>
-
-<!-- ── MAIN CONTENT ── -->
-<div class="page-wrap">
-
-  <!-- Tab Switcher -->
-  <div class="tab-switcher">
-    <div class="sw-tab active" onclick="switchTab('create')" id="sw-create">➕ Create New Post</div>
-    <div class="sw-tab"        onclick="switchTab('edit')"   id="sw-edit">✏️ Edit Post</div>
-  </div>
-
-  <!-- ════════════════════════════════════════════
-       CREATE NEW POST TAB
-       ════════════════════════════════════════════ -->
-  <div id="tab-create" class="show">
-
-    <div class="page-header">
-      <a href="/posts" class="back-link">← Posts</a>
-      <div class="page-title">Create New Post</div>
+            <button type="submit" style="width:100%; background:var(--accent); color:#fff; border:none; padding:16px; border-radius:8px; font-weight:800; font-size:16px; cursor:pointer; box-shadow:0 8px 25px rgba(229,9,20,0.4); transition:0.2s;" onmouseover="this.style.transform='scale(1.02)'" onmouseout="this.style.transform='scale(1)'">🚀 Publish Post</button>
+        </form>
     </div>
 
-    <form id="createForm" action="/api/post/publish" method="post" enctype="multipart/form-data">
+    <script>
+    async function searchVideosForPost() {
+        const q = document.getElementById('videoSearchInput').value.trim();
+        if(!q) return;
+        const resDiv = document.getElementById('videoSearchResults');
+        resDiv.style.display = 'block'; resDiv.innerHTML = '<div style="padding:15px; color:var(--muted); text-align:center;">🔍 Searching...</div>';
+        try {
+            const response = await fetch('/api/search?q=' + encodeURIComponent(q) + '&mode=none');
+            const data = await response.json();
+            if(!data.results || data.results.length === 0) { resDiv.innerHTML = '<div style="padding:15px; color:var(--muted); text-align:center;">❌ No files found.</div>'; return; }
+            let html = '';
+            data.results.forEach(f => {
+                const safeName = f.name.replace(/'/g, "\\'").replace(/"/g, "&quot;");
+                html += `<div style="padding:12px 15px; border-bottom:1px solid var(--border); cursor:pointer; transition:0.2s;" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='transparent'" onclick="addVideoToPost('${f.file_id}', '${safeName}')"><div style="font-weight:700; font-size:13px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${f.name}</div><div style="font-size:11px; color:var(--muted); margin-top:4px;"><span style="background:var(--bg4); padding:2px 6px; border-radius:4px;">${f.size}</span></div></div>`;
+            });
+            resDiv.innerHTML = html;
+        } catch(e) { resDiv.innerHTML = '<div style="padding:15px; color:var(--accent); text-align:center;">⚠️ Error!</div>'; }
+    }
+    function addVideoToPost(fileId, fileName) {
+        document.getElementById('videoSearchResults').style.display = 'none';
+        const container = document.getElementById('selectedVideosContainer');
+        const div = document.createElement('div');
+        div.style.cssText = "background:var(--card); border:1px solid var(--accent); padding:15px; border-radius:8px; display:flex; gap:15px; align-items:center;";
+        div.innerHTML = `
+            <div style="flex:1; min-width:0;">
+                <div style="font-size:11px; color:var(--muted); margin-bottom:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">📁 ${fileName}</div>
+                <input type="hidden" name="video_id" value="${fileId}">
+                <input type="text" name="video_heading" placeholder="Group Name (e.g. Episode 1 or Movie Links)" class="em-input" style="margin-bottom:8px; font-weight:700;" required>
+                <input type="text" name="video_name" placeholder="Quality (e.g. 1080p)" class="em-input" style="margin-bottom:0; font-weight:800; color:var(--accent);" required>
+            </div>
+            <button type="button" onclick="this.parentElement.remove()" style="background:rgba(160,8,8,0.8); color:#fff; border:none; padding:10px 15px; border-radius:6px; cursor:pointer; font-weight:bold; height:fit-content;">✖</button>`;
+        container.appendChild(div);
+    }
+    </script>
+    '''
+    return build_page("Create Post", form_wrapper("New Post", html_content, req.query.get('err',''), req.query.get('msg','')), "login-bg", "posts", role)
 
-      <!-- STEP 1: Basic Info -->
-      <div class="step-box">
-        <div class="step-header">
-          <div class="step-num">1</div>
-          <div class="step-title">Basic Information</div>
-        </div>
-        <label class="scard-label">Post Title</label>
-        <input class="em-input" type="text" name="title" placeholder="e.g. Panchayat S03 or Pushpa 2" required>
+# ─────────────────────────────────────────────────────────
+# ✏️ 2. ADMIN ROUTE: EDIT POST WIZARD (UI)
+# ─────────────────────────────────────────────────────────
+@post_routes.get('/admin/edit_post/{id}')
+async def edit_post_page(req):
+    role, _ = await get_auth(req)
+    if role != 'admin': return web.HTTPFound('/dashboard')
+    
+    post_id = req.match_info['id']
+    post = await posts_col.find_one({"_id": ObjectId(post_id)})
+    if not post: return web.HTTPFound('/posts?err=Post not found')
 
-        <label class="scard-label">Short Description</label>
-        <textarea class="em-input" name="description" placeholder="Write a short description about this post..." required></textarea>
+    title = html.escape(post.get('title', ''))
+    desc = html.escape(post.get('description', ''))
+    tags = html.escape(", ".join(post.get('tags', [])))
+    cover_url = post.get('cover_image', '')
+    ss_urls = "\n".join(post.get('screenshots', []))
 
-        <label class="scard-label">Search Tags (Comma Separated)</label>
-        <input class="em-input" type="text" name="tags" placeholder="e.g. Action, Web Series, 2024, Hindi" style="margin-bottom:0">
-      </div>
+    video_html = ""
+    for v in post.get('videos', []):
+        vid = v.get('file_id')
+        vheading = html.escape(v.get('heading', 'Download Links'))
+        vname = html.escape(v.get('custom_name', '1080p'))
+        video_html += f'''
+        <div style="background:var(--card); border:1px solid var(--accent); padding:15px; border-radius:8px; display:flex; gap:15px; align-items:center;">
+            <div style="flex:1; min-width:0;">
+                <div style="font-size:11px; color:var(--muted); margin-bottom:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">📁 Pre-selected Media</div>
+                <input type="hidden" name="video_id" value="{vid}">
+                <input type="text" name="video_heading" value="{vheading}" placeholder="Group Name (e.g. Episode 1)" class="em-input" style="margin-bottom:8px; font-weight:700;" required>
+                <input type="text" name="video_name" value="{vname}" placeholder="Quality (e.g. 1080p)" class="em-input" style="margin-bottom:0; font-weight:800; color:var(--accent);" required>
+            </div>
+            <button type="button" onclick="this.parentElement.remove()" style="background:rgba(160,8,8,0.8); color:#fff; border:none; padding:10px 15px; border-radius:6px; cursor:pointer; font-weight:bold; height:fit-content;">✖</button>
+        </div>'''
 
-      <!-- STEP 2: Cover Image -->
-      <div class="step-box">
-        <div class="step-header">
-          <div class="step-num">2</div>
-          <div class="step-title">Cover Image</div>
-        </div>
-        <label class="scard-label">Paste Image URL (ibb.co or Direct Link)</label>
-        <input class="em-input" type="text" name="cover_url" id="c-cover-url" placeholder="https://i.ibb.co/..." oninput="previewCoverUrl(this.value,'c-cover-preview')">
-
-        <div id="c-cover-preview" style="display:none;width:100%;max-width:260px;aspect-ratio:16/9;background:var(--bg3);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:14px;">
-          <img id="c-cover-preview-img" src="" alt="Preview" style="width:100%;height:100%;object-fit:cover;" onerror="this.parentElement.style.display='none'">
-        </div>
-
-        <div class="divider-or">OR UPLOAD FILE</div>
-        <label class="em-upload-btn">
-          <div class="upload-icon-box">🖼️</div>
-          <div>
-            <div class="upload-label-main">Choose Cover Image</div>
-            <div class="upload-label-sub" id="c-cover-sub">No file chosen</div>
-          </div>
-          <input type="file" name="cover_file" accept="image/*" style="display:none" onchange="updateFileSub(this,'c-cover-sub'); previewLocalFile(this,'c-cover-preview','c-cover-preview-img')">
-        </label>
-      </div>
-
-      <!-- STEP 3: Screenshots -->
-      <div class="step-box">
-        <div class="step-header">
-          <div class="step-num">3</div>
-          <div class="step-title">Screenshots</div>
-        </div>
-        <label class="scard-label">Paste ibb.co Links (One per Line)</label>
-        <textarea class="em-input" name="screenshot_urls" placeholder="https://i.ibb.co/link1&#10;https://i.ibb.co/link2&#10;..."></textarea>
-
-        <div class="divider-or">AND / OR UPLOAD FILES</div>
-        <label class="em-upload-btn">
-          <div class="upload-icon-box">📸</div>
-          <div>
-            <div class="upload-label-main">Choose Screenshots</div>
-            <div class="upload-label-sub" id="c-ss-sub">No files chosen</div>
-          </div>
-          <input type="file" name="screenshot_files" accept="image/*" multiple style="display:none" onchange="updateFileSub(this,'c-ss-sub')">
-        </label>
-      </div>
-
-      <!-- STEP 4: Videos/Episodes -->
-      <div class="step-box accent-box">
-        <div class="step-header" style="border-bottom-color:rgba(229,9,20,.3)">
-          <div class="step-num red">4</div>
-          <div class="step-title red">Videos / Episodes</div>
-        </div>
-
-        <div class="search-row">
-          <input class="em-input" type="text" id="c-vid-search" placeholder="Search and add more files..."
-            onkeydown="if(event.key==='Enter'){event.preventDefault();searchVideos('c');}">
-          <button type="button" class="search-btn" onclick="searchVideos('c')">Search</button>
-        </div>
-
-        <div class="search-results" id="c-search-results"></div>
-
-        <label class="scard-label">Selected Videos / Episodes</label>
-        <div id="c-selected-vids">
-          <div class="selected-vids-empty">
-            <div class="no-vids-msg">No videos added yet. Search above to add files.</div>
-          </div>
-        </div>
-      </div>
-
-      <button type="submit" class="submit-btn" onclick="handleSubmit(event,'createForm')">🚀 Publish Post</button>
-    </form>
-  </div>
-
-  <!-- ════════════════════════════════════════════
-       EDIT POST TAB
-       ════════════════════════════════════════════ -->
-  <div id="tab-edit">
-
-    <div class="page-header">
-      <a href="#" onclick="history.back();return false;" class="back-link">← Cancel</a>
-      <div class="page-title">Edit Post</div>
+    html_content = f'''
+    <style>.em-input {{ width:100%; background:var(--bg); border:1px solid var(--border); padding:12px; color:var(--text); margin-bottom:15px; border-radius:6px; outline:none; font-family:inherit; }} .em-input:focus {{ border-color:var(--accent); }} .scard-label {{ font-size:13px; font-weight:700; color:var(--muted); margin-bottom:8px; text-transform:uppercase; letter-spacing:1px; }} .step-box {{ background:var(--card); border:1px solid var(--border); padding:25px; border-radius:12px; margin-bottom:20px; box-shadow:0 8px 25px rgba(0,0,0,0.2); }}</style>
+    <div class="main" style="max-width:850px; margin:30px auto; padding:0 20px;">
+        <h2 style="font-size:28px; font-weight:900; margin-bottom:25px; color:var(--text); display:flex; justify-content:space-between; align-items:center;"><span>✏️ Edit Post</span><a href="/post/{post_id}" style="font-size:14px; font-weight:700; color:var(--muted); text-decoration:none;">← Cancel</a></h2>
+        <form action="/api/post/update" method="post" enctype="multipart/form-data">
+            <input type="hidden" name="post_id" value="{post_id}">
+            <div class="step-box"><div class="scard-label">1. Post Title</div><input type="text" name="title" value="{title}" class="em-input" required><div class="scard-label" style="margin-top:10px;">2. Short Description</div><textarea name="description" class="em-input" style="min-height:120px;" required>{desc}</textarea><div class="scard-label" style="margin-top:10px;">3. Search Tags</div><input type="text" name="tags" value="{tags}" class="em-input"></div>
+            <div class="step-box"><div class="scard-label">4. Cover Image</div><input type="text" name="cover_url" value="{cover_url}" placeholder="Paste ibb.co Link" class="em-input" style="margin-bottom:10px;"><div style="text-align:center; color:var(--muted); margin-bottom:10px; font-weight:800; font-size:12px;">OR UPLOAD NEW FILE</div><input type="file" name="cover_file" accept="image/*" class="em-input" style="padding:8px;"></div>
+            <div class="step-box"><div class="scard-label">5. Screenshots (Multiple)</div><textarea name="screenshot_urls" class="em-input" style="min-height:100px; white-space:pre-wrap; margin-bottom:10px;">{ss_urls}</textarea><div style="text-align:center; color:var(--muted); margin-bottom:10px; font-weight:800; font-size:12px;">AND / OR UPLOAD FILES</div><input type="file" name="screenshot_files" accept="image/*" multiple class="em-input" style="padding:8px;"></div>
+            <div class="step-box" style="border-color:var(--accent);"><div class="scard-label" style="color:var(--accent);">6. Add Videos / Episodes</div><div style="display:flex; gap:10px; margin-bottom:10px;"><input type="text" id="videoSearchInput" placeholder="Search database..." class="em-input" style="margin-bottom:0;" onkeydown="if(event.key==='Enter'){{ event.preventDefault(); searchVideosForPost(); }}"><button type="button" onclick="searchVideosForPost()" style="background:var(--accent); color:#fff; border:none; padding:0 24px; border-radius:6px; font-weight:800; cursor:pointer;">Search</button></div><div id="videoSearchResults" style="background:var(--bg2); border:1px solid var(--border); border-radius:6px; max-height:250px; overflow-y:auto; display:none; margin-bottom:20px;"></div><div class="scard-label">Selected Videos / Episodes:</div><div id="selectedVideosContainer" style="display:flex; flex-direction:column; gap:10px; min-height:50px; padding:10px; background:var(--bg); border-radius:8px; border:1px dashed var(--border);">{video_html}</div></div>
+            <button type="submit" style="width:100%; background:var(--accent); color:#fff; border:none; padding:16px; border-radius:8px; font-weight:800; font-size:16px; cursor:pointer;">💾 Save Changes</button>
+        </form>
     </div>
+    <script>
+    async function searchVideosForPost() {{ const q = document.getElementById('videoSearchInput').value.trim(); if(!q) return; const resDiv = document.getElementById('videoSearchResults'); resDiv.style.display = 'block'; resDiv.innerHTML = '<div style="padding:15px; color:var(--muted); text-align:center;">🔍 Searching...</div>'; try {{ const response = await fetch('/api/search?q=' + encodeURIComponent(q) + '&mode=none'); const data = await response.json(); if(!data.results || data.results.length === 0) {{ resDiv.innerHTML = '<div style="padding:15px; color:var(--muted); text-align:center;">❌ No files found.</div>'; return; }} let html = ''; data.results.forEach(f => {{ const safeName = f.name.replace(/'/g, "\\\\\\'").replace(/"/g, "&quot;"); html += `<div style="padding:12px 15px; border-bottom:1px solid var(--border); cursor:pointer; transition:0.2s;" onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='transparent'" onclick="addVideoToPost('${{f.file_id}}', '${{safeName}}')"><div style="font-weight:700; font-size:13px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${{f.name}}</div></div>`; }}); resDiv.innerHTML = html; }} catch(e) {{ resDiv.innerHTML = '<div style="padding:15px; color:var(--accent); text-align:center;">⚠️ Error!</div>'; }} }}
+    function addVideoToPost(fileId, fileName) {{ document.getElementById('videoSearchResults').style.display = 'none'; const container = document.getElementById('selectedVideosContainer'); const div = document.createElement('div'); div.style.cssText = "background:var(--card); border:1px solid var(--accent); padding:15px; border-radius:8px; display:flex; gap:15px; align-items:center;"; div.innerHTML = `<div style="flex:1; min-width:0;"><div style="font-size:11px; color:var(--muted); margin-bottom:8px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">📁 ${{fileName}}</div><input type="hidden" name="video_id" value="${{fileId}}"><input type="text" name="video_heading" placeholder="Group Name (e.g. Episode 2)" class="em-input" style="margin-bottom:8px; font-weight:700;" required><input type="text" name="video_name" placeholder="Quality (e.g. 1080p)" class="em-input" style="margin-bottom:0; font-weight:800; color:var(--accent);" required></div><button type="button" onclick="this.parentElement.remove()" style="background:rgba(160,8,8,0.8); color:#fff; border:none; padding:10px 15px; border-radius:6px; cursor:pointer; font-weight:bold; height:fit-content;">✖</button>`; container.appendChild(div); }}
+    </script>
+    '''
+    return build_page("Edit Post", form_wrapper("Edit Post", html_content, req.query.get('err',''), req.query.get('msg','')), "login-bg", "posts", role)
 
-    <form id="editForm" action="/api/post/update" method="post" enctype="multipart/form-data">
-      <input type="hidden" name="post_id" id="edit-post-id" value="">
+# ─────────────────────────────────────────────────────────
+# ⚙️ 3. API: PUBLISH & UPDATE POSTS
+# ─────────────────────────────────────────────────────────
+async def process_multipart_post(req, action="publish"):
+    reader = await req.multipart()
+    post_data = {"title": "", "description": "", "cover_image": "", "screenshots": [], "videos": [], "tags": []}
+    if action == "publish": post_data["created_at"] = int(time.time())
+    
+    screenshot_urls_raw = ""
+    temp_v_ids, temp_v_headings, temp_v_names = [], [], []
+    post_id = None
+    
+    while True:
+        part = await reader.next()
+        if part is None: break
+        p_name = part.name
+        
+        if p_name == 'post_id': post_id = (await part.read()).decode().strip()
+        elif p_name == 'title': post_data["title"] = (await part.read()).decode().strip()
+        elif p_name == 'description': post_data["description"] = (await part.read()).decode().strip()
+        elif p_name == 'tags': post_data["tags"] = [t.strip() for t in (await part.read()).decode().strip().split(",") if t.strip()]
+        
+        # 🚀 3 Lists for Grouped Videos Processing
+        elif p_name == 'video_id': temp_v_ids.append((await part.read()).decode().strip())
+        elif p_name == 'video_heading': temp_v_headings.append((await part.read()).decode().strip())
+        elif p_name == 'video_name': temp_v_names.append((await part.read()).decode().strip())
+        
+        elif p_name == 'cover_url':
+            url = (await part.read()).decode().strip()
+            if url: post_data["cover_image"] = url
+        elif p_name == 'cover_file' and part.filename:
+            img_bytes = await part.read()
+            with io.BytesIO(img_bytes) as img_buf:
+                img_buf.name = "cover.jpg"
+                msg = await temp.BOT.send_photo(chat_id=THUMBNAIL_STORAGE_CHANNEL, photo=img_buf)
+                if msg and msg.photo:
+                    tg_id = msg.photo.sizes[-1].file_id if hasattr(msg.photo, "sizes") and msg.photo.sizes else msg.photo.file_id
+                    post_data["cover_image"] = f"TG_ID:{tg_id}"
+        elif p_name == 'screenshot_urls': screenshot_urls_raw = (await part.read()).decode().strip()
+        elif p_name == 'screenshot_files' and part.filename:
+            img_bytes = await part.read()
+            with io.BytesIO(img_bytes) as img_buf:
+                img_buf.name = f"ss_{int(time.time())}.jpg"
+                msg = await temp.BOT.send_photo(chat_id=THUMBNAIL_STORAGE_CHANNEL, photo=img_buf)
+                if msg and msg.photo:
+                    tg_id = msg.photo.sizes[-1].file_id if hasattr(msg.photo, "sizes") and msg.photo.sizes else msg.photo.file_id
+                    post_data["screenshots"].append(f"TG_ID:{tg_id}")
 
-      <!-- STEP 1: Basic Info -->
-      <div class="step-box">
-        <div class="step-header">
-          <div class="step-num">1</div>
-          <div class="step-title">Basic Information</div>
+    if post_data["cover_image"] and "ibb.co" in post_data["cover_image"]:
+        converted_cover = await convert_all_ibb_links([post_data["cover_image"]])
+        if converted_cover: post_data["cover_image"] = converted_cover[0]
+
+    if screenshot_urls_raw:
+        raw_urls = [u.strip() for u in screenshot_urls_raw.split('\n') if u.strip()]
+        direct_urls = await convert_all_ibb_links(raw_urls)
+        post_data["screenshots"].extend(direct_urls)
+        
+    for vid, vheading, vname in zip(temp_v_ids, temp_v_headings, temp_v_names):
+        if vid and vname: 
+            post_data["videos"].append({"file_id": vid, "heading": vheading or "Download Links", "custom_name": vname})
+        
+    return post_data, post_id
+
+@post_routes.post('/api/post/publish')
+async def api_publish_post(req):
+    role, _ = await get_auth(req)
+    if role != 'admin': return web.json_response({"error": "Unauthorized"}, status=403, dumps=fast_json)
+    try:
+        post_data, _ = await process_multipart_post(req, "publish")
+        await posts_col.insert_one(post_data)
+        return web.HTTPFound('/posts?msg=Post published successfully!')
+    except Exception as e: return web.HTTPFound(f'/admin/create_post?err=Server Error: {str(e)}')
+
+@post_routes.post('/api/post/update')
+async def api_update_post(req):
+    role, _ = await get_auth(req)
+    if role != 'admin': return web.HTTPFound('/dashboard')
+    try:
+        post_data, post_id = await process_multipart_post(req, "update")
+        if not post_id: return web.HTTPFound('/posts?err=Missing Post ID')
+        
+        # Preserve old cover if not changed
+        if not post_data.get("cover_image"):
+            old_post = await posts_col.find_one({"_id": ObjectId(post_id)})
+            if old_post and old_post.get("cover_image"): post_data["cover_image"] = old_post["cover_image"]
+
+        await posts_col.update_one({"_id": ObjectId(post_id)}, {"$set": post_data})
+        return web.HTTPFound(f'/post/{post_id}?msg=Post updated successfully!')
+    except Exception as e: return web.HTTPFound(f'/posts?err=Server Error: {str(e)}')
+
+@post_routes.post('/api/post/delete')
+async def api_delete_post(req):
+    role, _ = await get_auth(req)
+    if role != 'admin': return web.json_response({"success": False})
+    try:
+        data = await req.json()
+        await posts_col.delete_one({"_id": ObjectId(data.get('post_id'))})
+        return web.json_response({"success": True})
+    except: return web.json_response({"success": False})
+
+# ─────────────────────────────────────────────────────────
+# 🖼️ 4. API: SERVE TELEGRAM IMAGES FOR POSTS
+# ─────────────────────────────────────────────────────────
+@post_routes.get('/api/post/photo')
+async def get_post_photo(req):
+    tg_id = req.query.get("id")
+    if not tg_id: return web.Response(status=400)
+    try:
+        file_data = await temp.BOT.download_media(tg_id, in_memory=True)
+        if not file_data: return web.Response(status=404)
+        body_bytes = file_data.getvalue()
+        file_data.close()
+        return web.Response(body=body_bytes, content_type="image/jpeg", headers={"Cache-Control": "public, max-age=31536000"})
+    except: return web.Response(status=500)
+    finally: gc.collect()
+
+# ─────────────────────────────────────────────────────────
+# 🌐 5. PUBLIC ROUTE: POSTS DIRECTORY GRID
+# ─────────────────────────────────────────────────────────
+@post_routes.get('/posts')
+async def posts_directory_page(req):
+    role, _ = await get_auth(req)
+    if not role: return web.HTTPFound('/login')
+    
+    all_posts = await posts_col.find({}).sort("created_at", -1).limit(21).to_list(length=21)
+    has_next_init = len(all_posts) > 20
+    all_posts = all_posts[:20]
+    
+    admin_btn = '''<button onclick="window.location.href='/admin/create_post'" style="background:var(--accent); color:#fff; border:none; padding:0 24px; border-radius:8px; font-weight:800; cursor:pointer; white-space:nowrap;">➕ Create</button>''' if role == 'admin' else ""
+    
+    search_ui = f'''<style>.dir-grid {{ display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }} @media(min-width: 768px) {{ .dir-grid {{ grid-template-columns: repeat(5, 1fr); gap: 20px; }} }} .search-box {{ background:var(--card); border:1px solid var(--border); padding:16px; border-radius:12px; margin-bottom:25px; box-shadow:0 4px 15px rgba(0,0,0,0.1); display:flex; gap:10px; }} .s-input {{ flex:1; background:var(--bg3); border:1px solid var(--border); padding:12px 16px; color:var(--text); border-radius:8px; outline:none; font-weight:600; font-size:14px; font-family:inherit; }} .pg-bar {{ display:flex; justify-content:center; align-items:center; gap:15px; margin-top:30px; }}</style><div class="search-box"><input type="text" id="post_q" class="s-input" placeholder="Search movies, series, posts..."><button onclick="resetPost(); searchPosts()" style="background:var(--bg4); color:var(--text); border:1px solid var(--border); padding:0 24px; border-radius:8px; font-weight:800; cursor:pointer;">Search</button>{admin_btn}</div>'''
+
+    post_items = ""
+    for p in all_posts:
+        cover = p.get("cover_image", "")
+        img_src = f"/api/post/photo?id={cover.replace('TG_ID:', '')}" if cover.startswith("TG_ID:") else cover
+        post_items += f'''<div class="act-card card-enter" onclick="window.location.href='/post/{str(p["_id"])}'"><div style="position:relative; padding-top:135%; background:var(--bg3); overflow:hidden;"><img src="{img_src}" class="act-poster" loading="lazy"><div style="position:absolute; top:8px; left:8px; background:rgba(229,9,20,0.9); color:#fff; font-size:9px; padding:4px 8px; border-radius:4px; font-weight:800; backdrop-filter:blur(4px); z-index:2;">🎬 POST</div></div><div style="padding:12px; text-align:center;"><div style="font-size:13.5px; font-weight:800; color:var(--text); text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">{html.escape(p.get("title", "Untitled"))}</div></div></div>'''
+    
+    initial_grid = f'<div id="post_grid_container" class="dir-grid">{post_items}</div>' if all_posts else '<div style="text-align:center; padding:60px 20px; color:var(--muted);">No posts found.</div>'
+
+    js_logic = f'''<div class="pg-bar" id="post_pg_box" style="display:{'flex' if has_next_init else 'none'};"><button class="pg-btn" id="post_pBtn" onclick="prevPost()" disabled>Previous</button><span class="pg-info" id="post_pgInfo" style="font-weight:800;">Page 1</span><button class="pg-btn" id="post_nBtn" onclick="nextPost()">Next</button></div><script>var pOff = 0, pLim = 20, pPage = 1, pNext = {str(has_next_init).lower()}; async function searchPosts() {{ var q = document.getElementById('post_q').value.trim(); var grid = document.getElementById('post_grid_container'); grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; padding:40px; color:var(--muted); font-weight:bold;">🔄 Searching Catalog...</div>'; try {{ var res = await fetch(`/api/posts/search?q=${{encodeURIComponent(q)}}&offset=${{pOff}}`); var data = await res.json(); grid.innerHTML = data.html; staggerCards(grid); pNext = data.has_next; updatePgUI(); }} catch(e) {{ grid.innerHTML = '<div style="grid-column:1/-1; text-align:center; color:var(--accent);">Error loading posts!</div>'; }} }} function updatePgUI() {{ var box = document.getElementById('post_pg_box'); box.style.display = (pOff === 0 && !pNext) ? 'none' : 'flex'; document.getElementById('post_pBtn').disabled = (pOff === 0); document.getElementById('post_nBtn').disabled = !pNext; document.getElementById('post_pgInfo').innerText = 'Page ' + pPage; }} function resetPost() {{ pOff = 0; pPage = 1; }} function nextPost() {{ if(pNext) {{ pOff += pLim; pPage++; searchPosts(); window.scrollTo(0, 50); }} }} function prevPost() {{ if(pOff > 0) {{ pOff = Math.max(0, pOff - pLim); pPage--; searchPosts(); window.scrollTo(0, 50); }} }} document.getElementById('post_q').addEventListener('keydown', e => {{ if(e.key === 'Enter') {{ resetPost(); searchPosts(); }} }}); document.addEventListener("DOMContentLoaded", () => {{ var grid = document.getElementById('post_grid_container'); if(grid && typeof staggerCards === 'function') staggerCards(grid); }}); </script>'''
+
+    return build_page("Posts Catalog", f'<div class="main" style="padding-top:20px; max-width:1100px; margin:0 auto; padding-left:20px; padding-right:20px;">{search_ui}{initial_grid}{js_logic}</div>', "", "posts", role)
+
+@post_routes.get('/api/posts/search')
+async def api_posts_search(req):
+    role, _ = await get_auth(req)
+    if not role: return web.json_response({"html": ""}, dumps=fast_json)
+    q = req.query.get("q", "").strip()
+    try: offset = int(req.query.get("offset", 0))
+    except: offset = 0
+    lim = 20
+    query = {}
+    if q: 
+        safe_q = re.escape(q)
+        query["$or"] = [{"title": {"$regex": safe_q, "$options": "i"}}, {"tags": {"$regex": safe_q, "$options": "i"}}]
+        
+    docs = await posts_col.find(query).sort("created_at", -1).skip(offset).limit(lim + 1).to_list(length=lim + 1)
+    has_next = len(docs) > lim
+    docs = docs[:lim]
+    
+    if not docs: return web.json_response({"html": '<div style="grid-column:1/-1; text-align:center; color:var(--muted); padding:40px;">No posts matching your search.</div>', "has_next": False}, dumps=fast_json)
+        
+    html_out = ""
+    for p in docs:
+        cover = p.get("cover_image", "")
+        img_src = f"/api/post/photo?id={cover.replace('TG_ID:', '')}" if cover.startswith("TG_ID:") else cover
+        html_out += f'''<div class="act-card card-enter" onclick="window.location.href='/post/{str(p["_id"])}'"><div style="position:relative; padding-top:135%; background:var(--bg3); overflow:hidden;"><img src="{img_src}" class="act-poster" loading="lazy"><div style="position:absolute; top:8px; left:8px; background:rgba(229,9,20,0.9); color:#fff; font-size:9px; padding:4px 8px; border-radius:4px; font-weight:800; backdrop-filter:blur(4px); z-index:2;">🎬 POST</div></div><div style="padding:12px; text-align:center;"><div style="font-size:13.5px; font-weight:800; color:var(--text); text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">{html.escape(p.get("title", "Untitled"))}</div></div></div>'''
+            
+    return web.json_response({"html": html_out, "has_next": has_next}, dumps=fast_json)
+
+# ─────────────────────────────────────────────────────────
+# 🍿 6. PUBLIC ROUTE: SINGLE POST VIEW (Episodes Grouped)
+# ─────────────────────────────────────────────────────────
+@post_routes.get('/post/{id}')
+async def single_post_display(req):
+    role, _ = await get_auth(req)
+    if not role: return web.HTTPFound('/login')
+    
+    try:
+        post = await posts_col.find_one({"_id": ObjectId(req.match_info['id'])})
+        if not post: return web.Response(text="Post Not Found", status=404)
+    except: return web.Response(text="Invalid ID", status=400)
+    
+    cover = post.get("cover_image", "")
+    img_src = f"/api/post/photo?id={cover.replace('TG_ID:', '')}" if cover.startswith("TG_ID:") else cover
+    
+    tags_html = "".join([f'<span style="background:var(--bg3); border:1px solid var(--border); color:var(--muted); font-size:11px; padding:4px 10px; border-radius:4px; font-weight:700;">#{html.escape(t)}</span>' for t in post.get("tags", [])])
+    tags_div = f'<div style="display:flex; flex-wrap:wrap; gap:8px; margin-top:12px;">{tags_html}</div>' if tags_html else ""
+    
+    # 🚀 NEW: EPISODES GROUPING LOGIC (Netflix Style Layout)
+    video_buttons = ""
+    videos = post.get("videos", [])
+    if not videos:
+        video_buttons = '<div style="color:var(--muted); font-size:14px; font-weight:bold;">No media attached.</div>'
+    else:
+        grouped_vids = {}
+        for v in videos:
+            h = v.get("heading", "Download Links")
+            if h not in grouped_vids: grouped_vids[h] = []
+            grouped_vids[h].append(v)
+            
+        for heading, v_list in grouped_vids.items():
+            video_buttons += f'''
+            <div style="margin-bottom:20px; background:var(--bg2); border:1px solid var(--border); border-radius:10px; padding:15px; box-shadow:0 4px 12px rgba(0,0,0,0.1);">
+                <div style="font-size:16px; font-weight:900; color:var(--text); margin-bottom:12px; display:flex; align-items:center; gap:10px;">
+                    <span style="background:var(--accent); width:5px; height:18px; border-radius:4px;"></span>
+                    {html.escape(heading)}
+                </div>
+                <div style="display:flex; flex-wrap:wrap; gap:10px; padding-left:15px;">'''
+            
+            for v in v_list:
+                vid_id = v.get('file_id')
+                v_name = html.escape(v.get('custom_name', 'Play'))
+                video_buttons += f'<a href="/setup_stream?file_id={vid_id}&mode=watch" target="_blank" style="background:var(--card); border:1px solid var(--border); color:var(--text); font-weight:800; font-size:13px; text-decoration:none; padding:10px 20px; border-radius:6px; transition:0.2s; box-shadow:0 4px 10px rgba(0,0,0,0.2);" onmouseover="this.style.background=\'var(--accent)\'; this.style.borderColor=\'var(--accent)\'; this.style.color=\'#fff\'; this.style.transform=\'translateY(-2px)\'" onmouseout="this.style.background=\'var(--card)\'; this.style.borderColor=\'var(--border)\'; this.style.color=\'var(--text)\'; this.style.transform=\'translateY(0)\'">🎬 {v_name}</a>'
+            
+            video_buttons += '</div></div>'
+    
+    ss_html = ""
+    for ss in post.get("screenshots", []):
+        s_src = f"/api/post/photo?id={ss.replace('TG_ID:', '')}" if ss.startswith("TG_ID:") else ss
+        ss_html += f'<div style="border:1px solid var(--border); border-radius:8px; overflow:hidden; aspect-ratio:16/9; background:var(--bg3); box-shadow:0 4px 15px rgba(0,0,0,0.2);"><img src="{s_src}" style="width:100%; height:100%; object-fit:cover; cursor:pointer; transition:0.3s;" onmouseover="this.style.transform=\'scale(1.03)\'" onmouseout="this.style.transform=\'scale(1)\'" onclick="window.open(this.src, \'_blank\')"></div>'
+    
+    gallery_grid = f'<h3 style="font-size:20px; font-weight:800; color:var(--text); border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:20px; margin-top:40px;">📸 Screenshots</h3><div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(250px, 1fr)); gap:20px;">{ss_html}</div>' if ss_html else ""
+
+    admin_actions = f'''
+    <div style="margin-top:30px; padding-top:20px; border-top:1px solid var(--border); display:flex; gap:10px;">
+        <a href="/admin/edit_post/{str(post['_id'])}" style="background:var(--bg4); border:1px solid var(--border); color:var(--text); padding:12px 24px; border-radius:8px; font-weight:800; text-decoration:none; font-size:14px;">✏️ Edit Post</a>
+        <button onclick="if(confirm('Are you sure you want to delete this post?')) {{ fetch('/api/post/delete', {{method:'POST', body:JSON.stringify({{post_id:'{str(post['_id'])}'}})}}).then(r=>r.json()).then(d=>{{ if(d.success) window.location.href='/posts'; else alert('Failed to delete'); }}) }}" style="background:rgba(160,8,8,0.8); border:1px solid rgba(229,9,20,0.5); color:#fff; padding:12px 24px; border-radius:8px; font-weight:800; cursor:pointer; font-size:14px;">🗑️ Delete</button>
+    </div>
+    ''' if role == 'admin' else ""
+
+    page_body = f'''
+    <div class="main" style="max-width:950px; margin:30px auto; padding:0 20px;">
+        <div style="margin-bottom:20px;">
+            <a href="/posts" style="color:var(--muted); text-decoration:none; font-size:14px; font-weight:800;">← Back to Catalog</a>
         </div>
-        <label class="scard-label">Post Title</label>
-        <input class="em-input" type="text" name="title" id="edit-title" placeholder="Post title" required>
-
-        <label class="scard-label">Short Description</label>
-        <textarea class="em-input" name="description" id="edit-desc" placeholder="Short description..." required></textarea>
-
-        <label class="scard-label">Search Tags (Comma Separated)</label>
-        <input class="em-input" type="text" name="tags" id="edit-tags" placeholder="e.g. Action, Web Series, 2024" style="margin-bottom:0">
-      </div>
-
-      <!-- STEP 2: Cover Image -->
-      <div class="step-box">
-        <div class="step-header">
-          <div class="step-num">2</div>
-          <div class="step-title">Cover Image</div>
+        
+        <div style="background:var(--card); border:1px solid var(--border); border-radius:16px; overflow:hidden; box-shadow:0 12px 40px rgba(0,0,0,0.3);">
+            <div style="width:100%; aspect-ratio:21/9; background:url('{img_src}') center/cover; position:relative;">
+                <div style="position:absolute; inset:0; background:linear-gradient(to top, var(--card) 0%, transparent 100%);"></div>
+                <div style="position:absolute; bottom:25px; left:30px; right:30px;">
+                    <h1 style="font-size:36px; font-weight:900; color:var(--text); margin-bottom:5px; text-shadow:0 2px 10px rgba(0,0,0,0.8);">{html.escape(post.get("title", ""))}</h1>
+                    {tags_div}
+                </div>
+            </div>
+            
+            <div style="padding:35px 30px;">
+                <div style="font-size:16px; color:var(--text); line-height:1.7; margin-bottom:40px; white-space:pre-line; font-weight:500;">
+                    {html.escape(post.get("description", ""))}
+                </div>
+                
+                <h3 style="font-size:20px; font-weight:800; color:var(--text); border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:25px;">🍿 Episodes / Download Links</h3>
+                <div style="margin-bottom:30px;">
+                    {video_buttons}
+                </div>
+                
+                {gallery_grid}
+                {admin_actions}
+            </div>
         </div>
-
-        <!-- Existing cover previews -->
-        <div class="cover-preview-grid" id="edit-cover-grid" style="display:none"></div>
-
-        <label class="scard-label">New Image URL (Leave Blank to Keep Current)</label>
-        <input class="em-input" type="text" name="cover_url" id="e-cover-url"
-          placeholder="Telegram-hosted image (current)"
-          oninput="previewCoverUrl(this.value,'e-cover-preview')">
-
-        <div id="e-cover-preview" style="display:none;width:100%;max-width:260px;aspect-ratio:16/9;background:var(--bg3);border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:14px;">
-          <img id="e-cover-preview-img" src="" alt="Preview" style="width:100%;height:100%;object-fit:cover;" onerror="this.parentElement.style.display='none'">
-        </div>
-
-        <div class="divider-or">OR UPLOAD NEW FILE</div>
-        <label class="em-upload-btn">
-          <div class="upload-icon-box">🖼️</div>
-          <div>
-            <div class="upload-label-main">Replace Cover Image</div>
-            <div class="upload-label-sub" id="e-cover-sub">No file chosen</div>
-          </div>
-          <input type="file" name="cover_file" accept="image/*" style="display:none"
-            onchange="updateFileSub(this,'e-cover-sub'); previewLocalFile(this,'e-cover-preview','e-cover-preview-img')">
-        </label>
-      </div>
-
-      <!-- STEP 3: Screenshots -->
-      <div class="step-box">
-        <div class="step-header">
-          <div class="step-num">3</div>
-          <div class="step-title">Screenshots</div>
-        </div>
-        <label class="scard-label">Image URLs (One per Line)</label>
-        <textarea class="em-input" name="screenshot_urls" id="edit-ss-urls" placeholder="TG_ID:... or https://..."></textarea>
-
-        <div class="divider-or">AND / OR UPLOAD NEW FILES</div>
-        <label class="em-upload-btn">
-          <div class="upload-icon-box">📸</div>
-          <div>
-            <div class="upload-label-main">Add More Screenshots</div>
-            <div class="upload-label-sub" id="e-ss-sub">No files chosen</div>
-          </div>
-          <input type="file" name="screenshot_files" accept="image/*" multiple style="display:none"
-            onchange="updateFileSub(this,'e-ss-sub')">
-        </label>
-      </div>
-
-      <!-- STEP 4: Videos -->
-      <div class="step-box accent-box">
-        <div class="step-header" style="border-bottom-color:rgba(229,9,20,.3)">
-          <div class="step-num red">4</div>
-          <div class="step-title red">Videos / Episodes</div>
-        </div>
-
-        <div class="search-row">
-          <input class="em-input" type="text" id="e-vid-search" placeholder="Search and add more files..."
-            onkeydown="if(event.key==='Enter'){event.preventDefault();searchVideos('e');}">
-          <button type="button" class="search-btn" onclick="searchVideos('e')">Search</button>
-        </div>
-
-        <div class="search-results" id="e-search-results"></div>
-
-        <label class="scard-label">Current Videos / Episodes</label>
-        <div id="e-selected-vids">
-          <div class="selected-vids-empty">
-            <div class="no-vids-msg">No videos added yet. Search above to add files.</div>
-          </div>
-        </div>
-      </div>
-
-      <button type="submit" class="submit-btn" onclick="handleSubmit(event,'editForm')">💾 Save Changes</button>
-    </form>
-  </div>
-
-</div><!-- /page-wrap -->
-
-<!-- ── TOAST ── -->
-<div class="toast" id="toast"></div>
-
-<!-- ════════════════════════════════════════════
-     JAVASCRIPT — ALL FEATURES
-     ════════════════════════════════════════════ -->
-<script>
-/* ── THEME (exact web_assets.py logic) ── */
-(function(){
-  if(localStorage.getItem('theme')==='light')
-    document.documentElement.classList.add('light');
-})();
-function toggleThemeFixed(){
-  var l = document.documentElement.classList.toggle('light');
-  localStorage.setItem('theme', l ? 'light' : 'dark');
-}
-
-/* ── SIDEBAR ── */
-function openSidebar(){
-  document.getElementById('sidebar').classList.add('open');
-  document.getElementById('sbOverlay').classList.add('open');
-}
-function closeSidebar(){
-  document.getElementById('sidebar').classList.remove('open');
-  document.getElementById('sbOverlay').classList.remove('open');
-}
-
-/* ── TAB SWITCHER ── */
-function switchTab(t) {
-  document.getElementById('sw-create').classList.toggle('active', t==='create');
-  document.getElementById('sw-edit').classList.toggle('active', t==='edit');
-  document.getElementById('tab-create').classList.toggle('show', t==='create');
-  document.getElementById('tab-edit').classList.toggle('show', t==='edit');
-}
-
-/* ── TOAST (exact web_assets.py) ── */
-var _tt;
-function showToast(m, type) {
-  type = type || 'success';
-  var x = document.getElementById('toast');
-  x.textContent = m;
-  x.className = 'toast ' + type + ' show';
-  clearTimeout(_tt);
-  _tt = setTimeout(function(){ x.classList.remove('show'); }, 3000);
-}
-
-/* ── FILE INPUT LABEL ── */
-function updateFileSub(input, subId) {
-  var sub = document.getElementById(subId);
-  if (!sub || !input.files.length) return;
-  sub.textContent = input.files.length === 1
-    ? input.files[0].name
-    : input.files.length + ' files chosen';
-}
-
-/* ── LOCAL FILE PREVIEW (cover image) ── */
-function previewLocalFile(input, wrapId, imgId) {
-  if (!input.files || !input.files[0]) return;
-  var reader = new FileReader();
-  reader.onload = function(e) {
-    var wrap = document.getElementById(wrapId);
-    var img  = document.getElementById(imgId);
-    if (wrap && img) {
-      img.src = e.target.result;
-      wrap.style.display = 'block';
-    }
-  };
-  reader.readAsDataURL(input.files[0]);
-}
-
-/* ── URL PREVIEW (cover image) ── */
-function previewCoverUrl(url, wrapId) {
-  var trimmed = url.trim();
-  var wrap = document.getElementById(wrapId);
-  if (!wrap) return;
-  if (trimmed.startsWith('http')) {
-    var imgId = wrapId + '-img';
-    var img = document.getElementById(imgId);
-    if (img) { img.src = trimmed; }
-    wrap.style.display = 'block';
-  } else {
-    wrap.style.display = 'none';
-  }
-}
-
-/* ── VIDEO SEARCH ──
-   Calls your actual backend /api/search endpoint.
-   Falls back to demo mode if fetch fails (for standalone preview).
-── */
-async function searchVideos(tab) {
-  var inputEl    = document.getElementById(tab + '-vid-search');
-  var resultsDiv = document.getElementById(tab + '-search-results');
-  var q = inputEl.value.trim();
-  if (!q) { showToast('Kuch type karein phir search karein', 'error'); return; }
-
-  resultsDiv.innerHTML = '<div style="padding:14px;text-align:center;color:var(--muted);font-weight:600;">🔍 Searching...</div>';
-  resultsDiv.style.display = 'block';
-
-  try {
-    var res  = await fetch('/api/search?q=' + encodeURIComponent(q) + '&mode=none');
-    var data = await res.json();
-
-    if (!data.results || data.results.length === 0) {
-      resultsDiv.innerHTML = '<div style="padding:14px;text-align:center;color:var(--muted);">❌ Koi file nahi mili.</div>';
-      return;
-    }
-    var html = '';
-    data.results.forEach(function(f) {
-      var safeName = f.name.replace(/'/g,"\\'").replace(/"/g,'&quot;');
-      html += '<div class="search-result-item" onclick="addVideoEntry(\'' + tab + '\',\'' + f.file_id + '\',\'' + safeName + '\')">'
-            + '<div class="sri-name">📁 ' + f.name + '</div>'
-            + '<div class="sri-size"><span>' + (f.size || '') + '</span></div>'
-            + '</div>';
-    });
-    resultsDiv.innerHTML = html;
-
-  } catch(e) {
-    /* ── DEMO fallback (for standalone preview without backend) ── */
-    var demoFiles = [
-      {file_id:'DEMO001', name: q + ' [1080p].mkv',    size:'2.1 GB'},
-      {file_id:'DEMO002', name: q + ' [720p].mkv',     size:'1.2 GB'},
-      {file_id:'DEMO003', name: q + ' [Episode 1].mkv',size:'450 MB'},
-    ];
-    var html = '';
-    demoFiles.forEach(function(f){
-      var safeName = f.name.replace(/'/g,"\\'");
-      html += '<div class="search-result-item" onclick="addVideoEntry(\'' + tab + '\',\'' + f.file_id + '\',\'' + safeName + '\')">'
-            + '<div class="sri-name">📁 ' + f.name + '</div>'
-            + '<div class="sri-size"><span>' + f.size + '</span></div>'
-            + '</div>';
-    });
-    resultsDiv.innerHTML = html;
-  }
-}
-
-/* ── CLOSE SEARCH RESULTS ON OUTSIDE CLICK ── */
-document.addEventListener('click', function(e) {
-  ['c-search-results','e-search-results'].forEach(function(id){
-    var el = document.getElementById(id);
-    if (el && !el.contains(e.target) && !e.target.classList.contains('search-btn')) {
-      el.style.display = 'none';
-    }
-  });
-});
-
-/* ── ADD VIDEO ENTRY ── */
-function addVideoEntry(tab, fileId, fileName) {
-  document.getElementById(tab + '-search-results').style.display = 'none';
-  document.getElementById(tab + '-vid-search').value = '';
-
-  var container = document.getElementById(tab + '-selected-vids');
-
-  /* Remove empty state if present */
-  var emptyEl = container.querySelector('.selected-vids-empty');
-  if (emptyEl) emptyEl.remove();
-
-  /* Ensure wrapper div */
-  var wrap = container.querySelector('.selected-vids-wrap');
-  if (!wrap) {
-    wrap = document.createElement('div');
-    wrap.className = 'selected-vids-wrap';
-    container.appendChild(wrap);
-  }
-
-  var div = document.createElement('div');
-  div.className = 'vid-entry';
-  div.innerHTML =
-    '<div class="vid-entry-info">'
-    + '<div class="vid-entry-fname">📁 ' + fileName + '</div>'
-    + '<input type="hidden" name="video_id" value="' + fileId + '">'
-    + '<input type="text" name="video_heading" placeholder="Group Name (e.g. Episode 1 or Movie Links)" class="em-input" style="margin-bottom:9px;font-weight:700;" required>'
-    + '<input type="text" name="video_name" placeholder="Quality (e.g. 1080p)" class="em-input" style="margin-bottom:0;font-weight:800;color:var(--accent);" required>'
-    + '</div>'
-    + '<button type="button" class="vid-remove-btn" onclick="removeVidEntry(this,\'' + tab + '\')">✖</button>';
-
-  wrap.appendChild(div);
-  showToast('✅ File add hua! Details bharein.');
-}
-
-/* ── REMOVE VIDEO ENTRY ── */
-function removeVidEntry(btn, tab) {
-  var entry = btn.closest('.vid-entry');
-  if (entry) entry.remove();
-
-  var wrap = document.getElementById(tab + '-selected-vids').querySelector('.selected-vids-wrap');
-  if (wrap && wrap.children.length === 0) {
-    wrap.remove();
-    var container = document.getElementById(tab + '-selected-vids');
-    container.innerHTML = '<div class="selected-vids-empty"><div class="no-vids-msg">No videos added yet. Search above to add files.</div></div>';
-  }
-  showToast('File remove hua.');
-}
-
-/* ── FORM SUBMIT ── */
-function handleSubmit(e, formId) {
-  /* Let the form submit normally to backend.
-     Only intercept if we want client-side validation. */
-  var form = document.getElementById(formId);
-
-  /* Basic validation */
-  var titleEl = form.querySelector('[name="title"]');
-  var descEl  = form.querySelector('[name="description"]');
-  if (titleEl && !titleEl.value.trim()) {
-    e.preventDefault();
-    showToast('Title likhna zaroori hai!', 'error');
-    titleEl.focus();
-    return;
-  }
-  if (descEl && !descEl.value.trim()) {
-    e.preventDefault();
-    showToast('Description likhna zaroori hai!', 'error');
-    descEl.focus();
-    return;
-  }
-  /* All good — form will submit to backend naturally */
-  showToast('⏳ Saving...');
-}
-
-/* ── POPULATE EDIT FORM (call this from your post list page) ──
-   Example usage from another page:
-   window.location.href = '/admin_ui.html?mode=edit&post_id=...&title=...&desc=...&tags=...&cover=...&ss=...&videos=...'
-── */
-function populateEditForm(data) {
-  document.getElementById('edit-post-id').value  = data.post_id  || '';
-  document.getElementById('edit-title').value    = data.title    || '';
-  document.getElementById('edit-desc').value     = data.desc     || '';
-  document.getElementById('edit-tags').value     = data.tags     || '';
-  document.getElementById('edit-ss-urls').value  = data.ss_urls  || '';
-  document.getElementById('e-cover-url').value   = data.cover    || '';
-
-  /* Show existing cover previews */
-  if (data.cover_images && data.cover_images.length) {
-    var grid = document.getElementById('edit-cover-grid');
-    grid.innerHTML = '';
-    data.cover_images.forEach(function(item) {
-      var src = item.url || '';
-      grid.innerHTML += '<div class="cover-thumb">'
-        + '<img class="cover-thumb-img" src="' + src + '" onerror="this.style.display=\'none\'">'
-        + '<div class="cover-thumb-label">' + (item.label || '') + '</div>'
-        + '</div>';
-    });
-    grid.style.display = 'grid';
-  }
-
-  /* Pre-load existing videos */
-  if (data.videos && data.videos.length) {
-    var container = document.getElementById('e-selected-vids');
-    container.innerHTML = '<div class="selected-vids-wrap"></div>';
-    var wrap = container.querySelector('.selected-vids-wrap');
-    data.videos.forEach(function(v) {
-      var div = document.createElement('div');
-      div.className = 'vid-entry';
-      div.innerHTML =
-        '<div class="vid-entry-info">'
-        + '<div class="vid-entry-fname">📁 Pre-selected Media</div>'
-        + '<input type="hidden" name="video_id" value="' + v.file_id + '">'
-        + '<input type="text" name="video_heading" value="' + (v.heading||'') + '" placeholder="Group Name" class="em-input" style="margin-bottom:9px;font-weight:700;" required>'
-        + '<input type="text" name="video_name" value="' + (v.custom_name||'') + '" placeholder="Quality (e.g. 1080p)" class="em-input" style="margin-bottom:0;font-weight:800;color:var(--accent);" required>'
-        + '</div>'
-        + '<button type="button" class="vid-remove-btn" onclick="removeVidEntry(this,\'e\')">✖</button>';
-      wrap.appendChild(div);
-    });
-  }
-
-  switchTab('edit');
-}
-
-/* ── URL PARAMS: auto-populate edit form if ?mode=edit&... ── */
-(function() {
-  var params = new URLSearchParams(window.location.search);
-  if (params.get('mode') === 'edit') {
-    populateEditForm({
-      post_id: params.get('post_id') || '',
-      title:   params.get('title')   || '',
-      desc:    params.get('desc')    || '',
-      tags:    params.get('tags')    || '',
-      cover:   params.get('cover')   || '',
-      ss_urls: params.get('ss')      || '',
-    });
-  }
-})();
-</script>
-</body>
-</html>
+    </div>
+    '''
+    return build_page(f"{post.get('title', 'Post')} - Catalog", page_body, "", "posts", role)
