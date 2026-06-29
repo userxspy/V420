@@ -388,7 +388,7 @@ async def create_post_page(req):
                 <div class="pf-search-row">
                     <input type="text" id="videoSearchInput" placeholder="Search files in database..." class="pf-input"
                         onkeydown="if(event.key==='Enter'){{ event.preventDefault(); searchVideosForPost(); }}">
-                    <button type="button" class="pf-search-btn" onclick="searchVideosForPost()">Search</button>
+                    <button type="button" class="pf-search-btn" onclick="event.stopPropagation(); searchVideosForPost();">Search</button>
                 </div>
                 <div id="videoSearchResults" class="pf-search-results"></div>
 
@@ -576,7 +576,7 @@ async def edit_post_page(req):
                 <div class="pf-search-row">
                     <input type="text" id="videoSearchInput" placeholder="Search and add more files..." class="pf-input"
                         onkeydown="if(event.key==='Enter'){{ event.preventDefault(); searchVideosForPost(); }}">
-                    <button type="button" class="pf-search-btn" onclick="searchVideosForPost()">Search</button>
+                    <button type="button" class="pf-search-btn" onclick="event.stopPropagation(); searchVideosForPost();">Search</button>
                 </div>
                 <div id="videoSearchResults" class="pf-search-results"></div>
 
