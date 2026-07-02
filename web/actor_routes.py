@@ -5,8 +5,8 @@ from bson.objectid import ObjectId
 from utils import temp, get_size
 # ✅ SYNC: ACTOR_STORAGE_CHANNEL को ऐड किया गया है पृथक अपलोड के लिए
 from info import BIN_CHANNEL, MAX_WEB_RESULTS, ACTOR_STORAGE_CHANNEL
-from database.ia_filterdb import actors, get_actor_search_results
-from web.web_assets import build_page, get_auth, form_wrapper
+from database.ia_filterdb import actors, get_actor_search_results, delete_actor_profile, delete_gallery_image_by_index
+from web.web_assets import build_page, get_auth, form_wrapper, require_active_plan
 
 actor_routes = web.RouteTableDef()
 
@@ -22,8 +22,9 @@ def fast_json(data):
 # ─────────────────────────────────────────────────────────
 @actor_routes.get('/actors')
 async def actors_directory_page(req):
-    role, _ = await get_auth(req)
+    role, tg_id = await get_auth(req)
     if not role: return web.HTTPFound('/login')
+    if not await require_active_plan(role, tg_id): return web.HTTPFound('/premium_expired')
     
     all_actors = await actors.find({}).sort("created_at", -1).limit(21).to_list(length=21)
     has_next_init = len(all_actors) > 20
@@ -325,8 +326,9 @@ async def get_actor_photo(req):
 # ─────────────────────────────────────────────────────────
 @actor_routes.get('/actor/{id}')
 async def actor_profile_display(req):
-    role, _ = await get_auth(req)
+    role, tg_id = await get_auth(req)
     if not role: return web.HTTPFound('/login')
+    if not await require_active_plan(role, tg_id): return web.HTTPFound('/premium_expired')
     try:
         actor_id = req.match_info['id']
         actor = await actors.find_one({"_id": ObjectId(actor_id)})
@@ -488,14 +490,17 @@ async def api_actor_gallery_delete(req):
     if role != 'admin': return web.json_response({"error": "Unauthorized"}, status=403, dumps=fast_json)
     try:
         body = await req.json()
-        actor = await actors.find_one({"_id": ObjectId(body.get("actor_id"))})
-        if not actor or "gallery" not in actor: return web.json_response({"success": False, "error": "Actor not found"}, dumps=fast_json)
-        gallery = actor["gallery"]
-        if 0 <= body.get("index") < len(gallery):
-            del gallery[body.get("index")]
-            await actors.update_one({"_id": ObjectId(body.get("actor_id"))}, {"$set": {"gallery": gallery}})
-            return web.json_response({"success": True}, dumps=fast_json)
-        return web.json_response({"success": False, "error": "Index out of bounds"}, dumps=fast_json)
+        actor_id, index = body.get("actor_id"), body.get("index")
+        if not actor_id or index is None:
+            return web.json_response({"success": False, "error": "Missing actor_id/index"}, dumps=fast_json)
+        # ✅ DUPLICATION FIX: यह लॉजिक अब database/ia_filterdb.py के
+        # delete_gallery_image_by_index() से आता है (वही जगह जो पहले से मौजूद थी
+        # और $pull का सुरक्षित atomic तरीका इस्तेमाल करती है, यहाँ दोबारा
+        # find + manual splice + पूरा array $set नहीं लिखा गया)।
+        ok = await delete_gallery_image_by_index(actor_id, int(index))
+        if not ok:
+            return web.json_response({"success": False, "error": "Actor not found or index out of bounds"}, dumps=fast_json)
+        return web.json_response({"success": True}, dumps=fast_json)
     except Exception as e: return web.json_response({"success": False, "error": str(e)}, dumps=fast_json)
 
 # ─────────────────────────────────────────────────────────
@@ -507,6 +512,9 @@ async def api_actor_delete(req):
     if role != 'admin': return web.json_response({"error": "Unauthorized"}, status=403, dumps=fast_json)
     if not req.query.get("id"): return web.json_response({"error": "Missing ID"}, status=400, dumps=fast_json)
     try:
-        await actors.delete_one({"_id": ObjectId(req.query.get("id"))})
+        # ✅ DUPLICATION FIX: database/ia_filterdb.py का delete_actor_profile()
+        # पहले से मौजूद था, यहाँ दोबारा actors.delete_one() लिखने की जरूरत नहीं।
+        ok = await delete_actor_profile(req.query.get("id"))
+        if not ok: return web.json_response({"error": "Actor not found"}, status=404, dumps=fast_json)
         return web.json_response({"success": True}, dumps=fast_json)
     except Exception as e: return web.json_response({"error": str(e)}, status=500, dumps=fast_json)
