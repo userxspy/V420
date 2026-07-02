@@ -3,9 +3,8 @@ import io
 import qrcode
 import asyncio
 import logging
-import pytz
 import gc
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 # ─────────────────────────────────────────────────────────
 # 🔥 CRITICAL EXPLICIT PATCH: Forced Event Loop for Pyromod & uvloop Sync
@@ -34,7 +33,13 @@ from info import (
     PREMIUM_REMINDER_BUSY_GAP
 )
 from Script import script
-from utils import temp, get_readable_time, get_wish 
+# DUPLICATION FIX: parse_expire_time, safe_del, get_local_now pehle yahan
+# duplicate the huye the, ab utils.py se reuse ho rahe hain (utils.py hi wo
+# jagah hai jise filter.py/commands.py/search_api.py sab use karte hain).
+# Is file ka apna 'is_premium(uid, bot)' poori tarah hataya gaya - wo kahin
+# bhi call nahi hota tha (dead code), baki sab jagah utils.is_premium hi
+# use hota hai.
+from utils import temp, get_readable_time, get_wish, get_local_now, parse_expire_time, safe_del
 
 logger = logging.getLogger(__name__)
 VERIFY_CACHE = {}
@@ -43,47 +48,15 @@ ADMIN_MSG = "👑 <b>You are the Admin!</b>\nYou have Lifetime Premium access."
 ADMIN_ALERT = "👑 You are the Admin! You have Lifetime Premium access."
 
 # =========================================
-# ⚙️ CENTRALIZED LIFECYCLE HELPERS
+# Is file ke liye bacha hua akela lifecycle helper
 # =========================================
-def get_local_now():
-    """info.py के TIME_ZONE के अनुसार लाइव लोकल टाइम देता है"""
-    tz = pytz.timezone(TIME_ZONE)
-    return datetime.now(tz).replace(tzinfo=None)
-
-def parse_expire_time(e):
-    if isinstance(e, datetime): return e
-    try: return datetime.strptime(e, "%Y-%m-%d %H:%M:%S") if e else None
-    except: return None
-
+# NOTE: yeh jaan-boojhkar utils.get_ist_str se alag rakha gaya hai. Premium
+# plan ka 'expire' get_local_now() (naive, pehle se local time) se banta hai,
+# isliye ise seedha format karna hai - utils.get_ist_str apne dt mein +5:30
+# jodta hai, jo yahan lagane par time galat (double-shifted) dikha dega.
 def get_ist_str(dt):
-    """प्रीमियम एक्सपायरी को सुंदर पठनीय स्ट्रिंग में रेंडर करता है"""
-    # ✅ FIXED: 'surcharge' कबाड़ शब्द को हटाकर सिंटैक्स को 100% शुद्ध कर दिया गया है
+    """Premium expiry ko sundar padhne-yogya string mein render karta hai"""
     return dt.strftime("%d %B %Y, %I:%M %p") if dt else "Unknown"
-
-async def safe_del(c, cid, mids):
-    try: await c.delete_messages(cid, mids)
-    except: pass
-
-# =========================================
-# 💎 PREMIUM CHECKER SYSTEM SYNC
-# =========================================
-async def is_premium(uid, bot):
-    if not IS_PREMIUM or uid in ADMINS: return True
-    mp = await db.get_plan(uid)
-    if mp.get("premium"):
-        exp = parse_expire_time(mp.get("expire"))
-        if exp and exp < get_local_now(): 
-            try: 
-                await bot.send_message(
-                    uid, 
-                    "❌ <b>Your Premium Plan has Expired!</b>\n\nRenew with /plan to continue services.", 
-                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💎 Buy Premium Plan", callback_data="buy_prem")]])
-                )
-            except: pass
-            await db.update_plan(uid, {"expire": None, "plan": "", "premium": False})
-            return False
-        return True
-    return False
 
 # =========================================
 # ⏰ SMART AUTOMATED REMINDER PIPELINE
