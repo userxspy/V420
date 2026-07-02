@@ -19,6 +19,8 @@ from info import BIN_CHANNEL, ADMINS, BOT_TOKEN, MAX_WEB_RESULTS, MAX_THUMB_CACH
 # यहाँ db_stats के लिए 'db as filter_db' ऐड किया गया है
 from database.ia_filterdb import COLLECTIONS, get_search_results, db as filter_db
 from database.users_chats_db import db
+# ✅ SYNC FIX: cookie-session identity check अब यहाँ दोबारा नहीं लिखा, web_assets से reuse हो रहा है
+from web.web_assets import get_auth as web_get_auth
 
 logger = logging.getLogger(__name__)
 
@@ -31,17 +33,13 @@ def fast_json(data):
     """orjson बाइट्स (bytes) में डेटा देता है, aiohttp के लिए इसे स्ट्रिंग में डिकोड करना होता है"""
     return orjson.dumps(data).decode('utf-8')
 
-# ─────────────────────────────────────────────────────────
-# 🔤 STRICT SEARCH QUERY BUILDER (From Version 2)
-# ─────────────────────────────────────────────────────────
-def _build_strict_query(q: str) -> str:
-    """
-    MongoDB $text search को strict AND mode में convert exponential करता है।
-    "Bijli Ka Pyaar" → `"Bijli" "Ka" "Pyaar"`
-    डेटाबेस पर लोड घटाने के लिए सटीक रिज़ल्ट इंजन।
-    """
-    clean = q.replace('"', '').replace("'", "").strip()
-    return " ".join(f'"{w}"' for w in clean.split())
+# ✅ BUG FIX: यह duplicate function हटाया गया।
+# ia_filterdb.py के get_search_results()/_search() पहले से ही raw query से
+# strict "word" "word" $text-query बना लेते हैं। यहाँ पहले से quote-wrapped
+# string भेजने से get_search_results के अंदर regex fallback (_build_regex)
+# को वही quote marks literal characters की तरह मिल जाते थे, जिससे fallback
+# regex कभी किसी real filename से match ही नहीं करता था। अब raw `q` सीधे
+# get_search_results को भेजा जाता है (नीचे देखें)।
 
 # ─────────────────────────────────────────────────────────
 # 📸 TRUE LRU THUMBNAIL STORAGE (C-Based LRU-Dict)
@@ -147,9 +145,8 @@ async def bg_prefetch_worker(tg_id, q, col, mode, prefetch_offset, lim):
         if cache_key in PREFETCH_CACHE:
             return
 
-        strict_q = _build_strict_query(q)
         docs, next_off, _, _ = await get_search_results(
-            strict_q, lim, offset=prefetch_offset, collection_type=col, bypass_count=True
+            q, lim, offset=prefetch_offset, collection_type=col, bypass_count=True
         )
 
         if docs:
@@ -187,6 +184,22 @@ def verify_telegram_init_data(init_data: str) -> dict | None:
         return None
 
 
+# ✅ SYNC FIX: यह छोटा helper दोनों branches (init_data + cookie) में एक जैसा
+# admin/premium/IS_PREMIUM-fallback logic apply करता है, ताकि दोनों branch में
+# rule अलग-अलग न हो जाए (पहले cookie-branch में IS_PREMIUM fallback मिसिंग था)।
+async def _resolve_role_for_tg(tg_id):
+    if tg_id in ADMINS: return "admin"
+    # ℹ️ सुधार: पहले यहाँ लिखा था कि bot arg required है और is_premium(tg_id) क्रैश
+    # करेगा — यह गलत था। utils.py में is_premium(user_id, bot=None) है, bot optional
+    # है, इसलिए 1-arg कॉल पहले भी सुरक्षित था। premium.py में एक अलग (dead/unused)
+    # is_premium(uid, bot) कॉपी है जो कहीं import ही नहीं होती। यहाँ temp.BOT भेजना
+    # सिर्फ इसलिए रखा है ताकि plan expire होने पर user को notify भी मिल जाए
+    # (filter.py/commands.py जैसा), यह जरूरी bugfix नहीं बल्कि एक छोटा सुधार है।
+    if await is_premium(tg_id, temp.BOT): return "user"
+    if not IS_PREMIUM: return "user"
+    return None
+
+
 async def get_user_role(req):
     init_data = req.headers.get("X-Telegram-Init-Data", "").strip()
     if init_data:
@@ -194,19 +207,21 @@ async def get_user_role(req):
         if user:
             tg_id = int(user.get("id", 0))
             if tg_id:
-                if tg_id in ADMINS: return "admin", tg_id
-                if await is_premium(tg_id): return "user", tg_id
-                if not IS_PREMIUM: return "user", tg_id
+                role = await _resolve_role_for_tg(tg_id)
+                if role: return role, tg_id
         return None, None
 
-    s_user = req.cookies.get("user_session")
-    if s_user and hasattr(temp, "USER_SESSIONS"):
-        session = temp.USER_SESSIONS.get(s_user, {})
-        if session.get("expiry", 0) > time.time():
-            tg_id = session["tg_id"]
-            if tg_id in ADMINS: return "admin", tg_id
-            if await is_premium(tg_id): return "user", tg_id
-    return None, None
+    # ✅ DUPLICATION FIX: cookie/session पढ़ने वाला logic अब web_assets.get_auth() से
+    # ही आता है (वही function जो /dashboard, /actors, /posts पेज इस्तेमाल करते हैं),
+    # यहाँ दोबारा वही कोड नहीं लिखा गया। सिर्फ premium resolution अलग से जोड़ी गई है
+    # क्योंकि API endpoints को JSON 403 चाहिए, redirect नहीं।
+    role, tg_id = await web_get_auth(req)
+    if not role:
+        return None, None
+    if role == "admin":
+        return "admin", tg_id
+    resolved = await _resolve_role_for_tg(tg_id)
+    return (resolved, tg_id) if resolved else (None, None)
 
 
 # ─────────────────────────────────────────────────────────
@@ -259,9 +274,8 @@ async def api_search(req):
         del PREFETCH_CACHE[current_cache_key]
 
     if not all_m:
-        strict_q = _build_strict_query(q)
         all_m, next_offset, _, _ = await get_search_results(
-            strict_q, lim, offset=off, collection_type=col, bypass_count=True
+            q, lim, offset=off, collection_type=col, bypass_count=True
         )
 
     has_more = bool(next_offset)
