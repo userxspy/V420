@@ -51,9 +51,18 @@ async def start_warmup_engine(client, status_msg, user_id):
     }
 
     # पेंडिंग काउंट्स सिंक फेज
+    # ✅ BUG FIX: COLLECTIONS dict में "actors" भी शामिल है (actor profile records),
+    # जिनका schema फाइलों जैसा (file_ref/file_id/file_name) नहीं है। actors को शामिल
+    # रखने पर उनके पास "thumb_url" फील्ड ही न होने से हर actor doc इस query में
+    # गलती से मैच हो जाता (MongoDB में $ne/$not किसी missing field को भी match कर
+    # लेते हैं) — जिससे actor का ObjectId एक invalid Telegram file_id की तरह भेजने
+    # की कोशिश होती, बेवजह API कॉल्स और error-log waste होते। यही exclusion पहले
+    # से ia_filterdb.delete_files() में मौजूद है (name != "actors"), यहाँ भी वही लगाया।
     total_to_process = 0
     col_counts = {}
     for name, collection in COLLECTIONS.items():
+        if name == "actors":
+            continue
         count = await collection.count_documents(query)
         col_counts[name] = count
         total_to_process += count
@@ -74,6 +83,8 @@ async def start_warmup_engine(client, status_msg, user_id):
     start_time = time.time()
 
     for col_name, collection in COLLECTIONS.items():
+        if col_name == "actors":
+            continue
         if col_counts[col_name] == 0:
             continue
 
