@@ -31,6 +31,12 @@ class script(object):
 <b>📱 Apps:</b> <code>{}</code>
 <b>🌐 Websites:</b> <code>{}</code></blockquote>
 
+<b>📝 <u>Posts CMS (Total: {}):</u></b>
+<blockquote><b>🎬 Movies:</b> <code>{}</code>
+<b>📺 Web Series:</b> <code>{}</code>
+<b>📱 App Video:</b> <code>{}</code>
+<b>🔞 Porn:</b> <code>{}</code></blockquote>
+
 <b>⚙️ <u>Engine Metrics:</u></b>
 <blockquote><b>🖼️ Global Thumbs:</b> <code>{}</code>
 <b>⏱️ Uptime:</b> <code>{}</code></blockquote>"""
@@ -50,6 +56,8 @@ class script(object):
 <b>📱 Apps:</b> <code>{}</code>
 <b>🌐 Websites:</b> <code>{}</code></blockquote>
 
+<b>📝 <u>Posts Published:</u></b> <code>{}</code>
+
 <b>⏱️ System Running Since:</b> <code>{}</code>"""
 
     NEW_GROUP_TXT = """<b>#NewGroup 👥\n\n• Title: {}\n• ID: <code>{}</code>\n• Username: {}\n• Total Members: <code>{}</code></b>"""
@@ -66,38 +74,36 @@ class script(object):
 
     WELCOME_TEXT = """👋 Hello {mention}, Welcome to {title} group! 💞"""
 
-    HELP_TXT = """<b>👋 Hello {},
-    
-I can filter any movie and series you want.
-Just type the movie or series name in my PM, open our Mini App, or add me into your group!
+    HELP_TXT = """<blockquote><b>👋 Hello {},</b></blockquote>
 
-I have many more features for you.
-Please check the commands below 👇</b>"""
+<b>Fast. Smart. Powerful.
 
-    ADMIN_COMMAND_TXT = """<b>👑 <u>Bot Admin Commands:</u> 👇
+Choose a category below. 👇</b>"""
 
-• /stats - View database & user stats
-• /delete - Delete specific files from DB
-• /delete_all - Wipe entire collection
-• /add_prm - Grant premium manually
-• /rm_prm - Revoke premium status
-• /prm_list - Export premium users list
-• /web_users - View Web Dashboard users
-• /warmup_thumbs - Update Thumbnails
-• /restart - Hard restart the bot session
+    ADMIN_COMMAND_TXT = """<blockquote><b>👑 <u>Bot Admin Commands:</u> 👇</b></blockquote>
 
-⚙️ <u>Group Management Guide:</u> 👇
+• /stats - Database stats
+• /delete - Delete file
+• /delete_all - Clear collection
+• /add_prm - Add premium
+• /rm_prm - Remove premium
+• /prm_list - Premium users
+• /web_users - Web users
+• /warmup_thumbs - Refresh thumbnails
+• /restart - Restart bot
 
-• /search on | off - Toggle Auto Filter
-• /settings - Open Group Settings UI
-• /button_style - Switch results mode
-• /mute | /unmute - Restrict group user
-• /ban - Ban user permanently from group
-• /warn | /resetwarn - Manage warnings
-• /addblacklist | /removeblacklist - Words
-• /blacklist - View blacklisted keywords
+<blockquote><b>⚙️ <u>Group Management Guide:</u> 👇</b></blockquote>
+
+• /search - Auto Filter
+• /settings - Group settings
+• /button_style - Result style
+• /mute | /unmute - Mute user
+• /ban - Ban user
+• /warn | /resetwarn - Warnings
+• /addblacklist | /removeblacklist - Blacklist words
+• /blacklist - View blacklist
 • /dlink | /removedlink - Auto-delete words
-• /dlinklist - View auto-delete triggers</b>"""
+• /dlinklist - Delete triggers"""
     
     PLAN_TXT = """💎 <b>Fast Finder Premium Plans</b> 💎
 
@@ -114,14 +120,14 @@ Activate a premium plan to unlock exclusive, high-speed features!
 
 👨‍🚒 <b>Support & Verification:</b> {}"""
 
-    USER_COMMAND_TXT = """<b>👨‍💻 <u>Bot User Commands:</u> 👇
+    USER_COMMAND_TXT = """<blockquote><b>👨‍💻 <u>Bot User Commands:</u> 👇</b></blockquote>
 
-• /start - Check if bot is alive and open Main Menu
-• /plan - View premium membership plan details
-• /myplan - Check your remaining premium duration
-• /id - Extract User ID, Chat ID, and message details
-• /fileid - Reply to media to extract its Telegram File ID
-• /ask or /ai - Chat with Gemini 2.5 Flash AI Assistant (10m Memory)</b>"""
+• /start - Main menu
+• /plan - Premium plans
+• /myplan - Premium status
+• /id - User & Chat ID
+• /fileid - Media File ID
+• /ask or /ai - AI Assistant"""
 
     LOG_INDEX_TXT = """📢 <b>#Indexing_Report 📊</b>
 

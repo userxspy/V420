@@ -11,6 +11,7 @@ from Script import script
 # ✅ FIX: actors कलेक्शन को इम्पोर्ट किया गया ताकि हम डायरेक्टरी की गिनती कर सकें
 from database.ia_filterdb import db_count_documents, get_file_details, delete_files, actors
 from database.users_chats_db import db
+from web.post_routes import posts_col
 
 from info import (
     IS_PREMIUM, URL, BIN_CHANNEL, ADMINS,
@@ -37,6 +38,27 @@ def _build_mini_app_url(base_url: str) -> str:
     return f"{url.rstrip('/')}/miniapp"
 
 MINI_APP_URL = _build_mini_app_url(URL)
+
+
+# ─────────────────────────────────────────────
+# 📝 POST CMS STATS — category-wise counts (reused by /stats & stats callback)
+# ─────────────────────────────────────────────
+async def _get_post_stats():
+    try:
+        raw_post_counts = {}
+        pipeline = [{"$group": {"_id": {"$ifNull": ["$category", "Uncategorized"]}, "count": {"$sum": 1}}}]
+        async for doc in posts_col.aggregate(pipeline):
+            raw_post_counts[doc["_id"]] = doc["count"]
+    except Exception as e:
+        raw_post_counts = {}
+        logger.error(f"Post Stats Error: {e}")
+
+    post_movies = raw_post_counts.get("Movies", 0)
+    post_webseries = raw_post_counts.get("Web Series", 0)
+    post_appvid = raw_post_counts.get("App Video", 0)
+    post_porn = raw_post_counts.get("Porn", 0)
+    post_total = sum(raw_post_counts.values())
+    return post_total, post_movies, post_webseries, post_appvid, post_porn
 
 
 # ─────────────────────────────────────────────
@@ -175,7 +197,9 @@ async def stats(_, message):
             tot_dir = app_dir = web_dir = act_dir = 0
             logger.error(f"Directory Stats Error: {e}")
 
-        # ✅ FIX: 16 Formatting Args Required for STATUS_TXT
+        post_total, post_movies, post_webseries, post_appvid, post_porn = await _get_post_stats()
+
+        # ✅ FIX: 21 Formatting Args Required for STATUS_TXT
         stats_text = script.STATUS_TXT.format(
             users, chats, premium,
             f.get('total', 0),
@@ -183,12 +207,12 @@ async def stats(_, message):
             f.get('cloud', 0), f.get('cloud_thumb', 0),
             f.get('archive', 0), f.get('archive_thumb', 0),
             tot_dir, act_dir, app_dir, web_dir,
+            post_total, post_movies, post_webseries, post_appvid, post_porn,
             f.get('total_thumb', 0),
             get_readable_time(time_now() - temp.START_TIME)
         )
 
         buttons = [
-            [InlineKeyboardButton("🔄 WARMUP THUMBNAILS", callback_data="warmup_trigger_all")],
             [InlineKeyboardButton("❌ CLOSE PANEL", callback_data=f"close_{message.from_user.id}")]
         ]
         await msg.edit(stats_text, reply_markup=InlineKeyboardMarkup(buttons))
@@ -324,6 +348,8 @@ async def ui_cb(client, query):
             except:
                 tot_dir = app_dir = web_dir = act_dir = 0
 
+            post_total, post_movies, post_webseries, post_appvid, post_porn = await _get_post_stats()
+
             if query.from_user.id in ADMINS:
                 try: users = await db.total_users_count()
                 except: users = 0
@@ -332,7 +358,7 @@ async def ui_cb(client, query):
                 try: premium = await db.premium.count_documents({"status.premium": True})
                 except: premium = 0
 
-                # 16 Args for STATUS_TXT
+                # 21 Args for STATUS_TXT
                 text = script.STATUS_TXT.format(
                     users, chats, premium,
                     f.get('total',0),
@@ -340,17 +366,17 @@ async def ui_cb(client, query):
                     f.get('cloud',0), f.get('cloud_thumb',0),
                     f.get('archive',0), f.get('archive_thumb',0),
                     tot_dir, act_dir, app_dir, web_dir,
+                    post_total, post_movies, post_webseries, post_appvid, post_porn,
                     f.get('total_thumb',0), uptime
                 )
                 btn = [
-                    [InlineKeyboardButton("🔄 WARMUP THUMBNAILS", callback_data="warmup_trigger_all")],
                     [InlineKeyboardButton("⬅️ Back Menu", callback_data="back_start")]
                 ]
             else:
-                # 9 Args for USER_STATUS_TXT
+                # 10 Args for USER_STATUS_TXT
                 text = script.USER_STATUS_TXT.format(
                     f.get('total',0), f.get('primary',0), f.get('cloud',0), f.get('archive',0),
-                    tot_dir, act_dir, app_dir, web_dir, uptime
+                    tot_dir, act_dir, app_dir, web_dir, post_total, uptime
                 )
                 btn = [[InlineKeyboardButton("⬅️ Back Menu", callback_data="back_start")]]
                 

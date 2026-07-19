@@ -320,6 +320,42 @@ async def get_search_results(query, max_results, offset=0, lang=None, collection
 
     return results, next_offset, total, actual_src
 
+
+# ─────────────────────────────────────────────────────────
+# 🆕 RECENT FILES (कोई query ना हो तब dashboard पर दिखाने के लिए
+# — सबसे नई अपलोड की गई फाइलें, ताकि पेज खाली ना लगे)
+# ─────────────────────────────────────────────────────────
+async def get_recent_files(max_results, offset=0, collection_type="all"):
+    proj = {"_id": 1, "file_name": 1, "file_size": 1, "file_type": 1, "file_ref": 1, "caption": 1, "thumb_url": 1}
+
+    if collection_type == "all":
+        take = offset + max_results + 1  # +1 ताकि has_more पता चल सके
+        merged = []
+        for col in (primary, cloud, archive):
+            cursor = col.find({}, proj).sort('_id', -1).limit(take)
+            docs = await cursor.to_list(length=take)
+            for doc in docs:
+                doc["file_id"] = doc["_id"]
+                doc["source_col"] = col.name.lower()
+            merged.extend(docs)
+
+        merged.sort(key=lambda d: d["_id"], reverse=True)
+        has_more = len(merged) > offset + max_results
+        page = merged[offset: offset + max_results]
+        next_offset = offset + max_results if has_more else ""
+        return page, next_offset
+
+    col = COLLECTIONS.get(collection_type, primary)
+    cursor = col.find({}, proj).sort('_id', -1).skip(offset).limit(max_results)
+    docs = await cursor.to_list(length=max_results)
+    for doc in docs:
+        doc["file_id"] = doc["_id"]
+        doc["source_col"] = collection_type
+    has_more = len(docs) == max_results
+    next_offset = offset + max_results if has_more else ""
+    return docs, next_offset
+
+
 # ─────────────────────────────────────────────────────────
 # 🗑 DELETE FILES  (✅ DELETE_CHANNEL बैकअप इंजन)
 # सिर्फ़ /delete (regex targeted delete) और web के /api/delete में डिलीट होने से

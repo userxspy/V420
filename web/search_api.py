@@ -14,11 +14,11 @@ from lru import LRU
 from aiohttp import web
 
 # कस्टमाइज्ड कोर यूटिल्स और कन्फर्म कंट्रोल्स इम्पोर्ट्स
-from utils import temp, get_size, is_rate_limited, is_premium
+from utils import temp, get_size, is_premium
 # ✅ SYNC: THUMBNAIL_STORAGE_CHANNEL को इम्पोर्ट किया गया है पृथक स्टोरेज के लिए
 from info import BIN_CHANNEL, ADMINS, BOT_TOKEN, MAX_WEB_RESULTS, MAX_THUMB_CACHE, IS_PREMIUM, USE_CAPTION_FILTER, THUMBNAIL_STORAGE_CHANNEL
 # यहाँ db_stats के लिए 'db as filter_db' ऐड किया गया है
-from database.ia_filterdb import COLLECTIONS, get_search_results, db as filter_db, delete_single_file
+from database.ia_filterdb import COLLECTIONS, get_search_results, get_recent_files, db as filter_db, delete_single_file
 from database.users_chats_db import db
 # ✅ SYNC FIX: cookie-session identity check अब यहाँ दोबारा नहीं लिखा, web_assets से reuse हो रहा है
 from web.web_assets import get_auth as web_get_auth
@@ -228,27 +228,69 @@ async def get_user_role(req):
 # ─────────────────────────────────────────────────────────
 # 🔍 SEARCH API — Smart Pre-fetch Grid Engine (orjson dumps)
 # ─────────────────────────────────────────────────────────
+def _build_results_list(all_m, mode):
+    results_list = []
+    for d in all_m:
+        fid = d.get("file_ref") or d.get("_id")
+        db_id = d.get("_id")
+        source_collection_name = d.get("source_col", "primary")
+
+        if mode == "none":
+            tg_thumb = ""
+            poster_url = ""
+        else:
+            raw_thumb = d.get("thumb_url", "")
+            v_salt = raw_thumb[-8:] if (raw_thumb and raw_thumb.startswith("TG_ID:")) else "0"
+            tg_thumb = f"/api/thumb?file_id={db_id}&col={source_collection_name}&v={v_salt}"
+            poster_url = tg_thumb
+
+        results_list.append({
+            "file_id": db_id,
+            "name": d.get("file_name", "Unknown File"),
+            "size": get_size(d.get("file_size", 0)),
+            "type": d.get("file_type", "document").upper(),
+            "source": source_collection_name.capitalize(),
+            "raw_collection": source_collection_name,
+            "poster": poster_url,
+            "tg_thumb": tg_thumb,
+            "watch": f"/setup_stream?file_id={fid}&mode=watch",
+            "download": f"/setup_stream?file_id={fid}&mode=download",
+            "caption": d.get("caption", ""),  # ✅ यहाँ नया बदलाव किया गया है
+        })
+    return results_list
+
+
 @search_routes.get("/api/search")
 async def api_search(req):
     role, tg_id = await get_user_role(req)
     if not role:
         return web.json_response({"error": "Unauthorized Access!"}, status=403, dumps=fast_json)
-    if is_rate_limited(tg_id, "web_search", 1):
-        return web.json_response({"error": "Spam Protection: Searching too fast!"}, status=429, dumps=fast_json)
 
     q = req.query.get("q", "").strip()
     off = req.query.get("offset", "0")
     col = req.query.get("col", "all").lower()
     mode = req.query.get("mode", "tg").lower()
 
-    if not q:
-        return web.json_response({"results": [], "total": 0, "next_offset": ""}, dumps=fast_json)
     try:
         off = max(0, int(off))
     except Exception:
         off = 0
 
     lim = MAX_WEB_RESULTS
+
+    # 🆕 कोई query नहीं दी गई — dashboard पर खाली स्क्रीन दिखाने की बजाय
+    # सबसे नई अपलोड की गई फाइलें (Recently Added) दिखाओ
+    if not q:
+        recent_docs, recent_next_offset = await get_recent_files(lim, offset=off, collection_type=col)
+        results_list = _build_results_list(recent_docs, mode)
+        has_more = bool(recent_next_offset)
+        return web.json_response({
+            "results": results_list,
+            "total": off + len(results_list) + (1 if has_more else 0),
+            "next_offset": recent_next_offset,
+            "is_admin": role == "admin",
+            "is_recent": True,
+        }, dumps=fast_json)
 
     if off == 0:
         trend_key = f"{col}_{mode}_{q.lower()}"
@@ -284,35 +326,7 @@ async def api_search(req):
     if has_more:
         asyncio.create_task(bg_prefetch_worker(tg_id, q, col, mode, next_offset, lim))
 
-    results_list = []
-
-    for d in all_m:
-        fid = d.get("file_ref") or d.get("_id")
-        db_id = d.get("_id")
-        source_collection_name = d.get("source_col", "primary")
-
-        if mode == "none":
-            tg_thumb = ""
-            poster_url = ""
-        else:
-            raw_thumb = d.get("thumb_url", "")
-            v_salt = raw_thumb[-8:] if (raw_thumb and raw_thumb.startswith("TG_ID:")) else "0"
-            tg_thumb = f"/api/thumb?file_id={db_id}&col={source_collection_name}&v={v_salt}"
-            poster_url = tg_thumb
-
-        results_list.append({
-            "file_id": db_id,
-            "name": d.get("file_name", "Unknown File"),
-            "size": get_size(d.get("file_size", 0)),
-            "type": d.get("file_type", "document").upper(),
-            "source": source_collection_name.capitalize(),
-            "raw_collection": source_collection_name,
-            "poster": poster_url,
-            "tg_thumb": tg_thumb,
-            "watch": f"/setup_stream?file_id={fid}&mode=watch",
-            "download": f"/setup_stream?file_id={fid}&mode=download",
-            "caption": d.get("caption", ""),  # ✅ यहाँ नया बदलाव किया गया है
-        })
+    results_list = _build_results_list(all_m, mode)
 
     if off == 0 and results_list:
         trend_key = f"{col}_{mode}_{q.lower()}"

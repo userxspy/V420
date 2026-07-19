@@ -168,7 +168,7 @@ async def manage_premium(c, m):
 async def prm_list(c, m):
     if not IS_PREMIUM: return
     msg, count, text = await m.reply("🔄 Fetching Active Members Database..."), 0, "💎 <b>Active Premium Members List</b>\n\n"
-    async for u in db.get_premium_users():
+    async for u in await db.get_premium_users():
         if u.get("status", {}).get("premium"):
             count += 1
             text += f"👤 <code>{u['id']}</code> | 🗓 {u['status'].get('plan')}\n"

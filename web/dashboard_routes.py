@@ -21,6 +21,9 @@ CARD_CSS = """
 
 .search-wrap{flex:1;min-width:0;display:flex;align-items:center;background:var(--bg3);border:1.5px solid var(--border);border-radius:12px;padding:0 6px 0 18px;gap:8px;overflow:hidden;min-height:38px;transition:border-color .18s}
 .search-wrap:focus-within{border-color:var(--border)}
+.search-spinner{display:none;width:15px;height:15px;flex-shrink:0;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:searchSpin .6s linear infinite}
+.search-wrap.loading .search-spinner{display:inline-block}
+@keyframes searchSpin{to{transform:rotate(360deg)}}
 .search-input{flex:1;min-width:0;width:100%;background:transparent;border:none;outline:none;color:var(--text);caret-color:var(--accent);font-size:14px;font-weight:600;padding:6px 0;font-family:inherit;-webkit-tap-highlight-color:transparent}
 .search-input::placeholder{color:var(--muted);font-weight:400}
 .search-input:-webkit-autofill,
@@ -71,6 +74,7 @@ CARD_CSS = """
 # ─────────────────────────────────────────────────────────────────────────────
 JS_ENGINE = """
 var curQ='',curOff=0,nextOff='',curCol='all',curPage=1;
+var searchReqId=0;
 var pMode=localStorage.getItem('posterMode')||'tg';
 var LIMIT_VAL = __LIMIT_PLACEHOLDER__;
 
@@ -141,23 +145,41 @@ function handleThumbError(fileId) {
 
 function triggerRipple(btn){btn.classList.remove('ripple-go');void btn.offsetWidth;btn.classList.add('ripple-go');setTimeout(function(){btn.classList.remove('ripple-go');},460);}
 
-async function doSearch(o){
+async function doSearch(o,allowEmpty){
     var q=document.getElementById('q').value.trim();
-    if(!q){showToast('Please enter a movie name','error');return;}
+    if(!q && !allowEmpty){showToast('Please enter a movie name','error');return;}
     curQ=q;curOff=o;if(o===0)curPage=1;
 
+    var myReq=++searchReqId;
     var resDiv=document.getElementById('results');
-    resDiv.className='res-grid mode-'+pMode;
-    resDiv.innerHTML='<div class="spin-wrap"><div class="spinner"></div><span>Searching...</span></div>';
+    var qWrap=document.getElementById('qWrap');
+    var loadTimer=setTimeout(function(){
+        if(myReq!==searchReqId)return;
+        if(qWrap)qWrap.classList.add('loading');
+    },150);
 
     try{
         var r=await fetch('/api/search?q='+encodeURIComponent(q)+'&offset='+o+'&col='+curCol+'&mode='+pMode);
-        if(!r.ok){showToast('Error fetching','error');return;}
-        var d=await r.json();
-        if(d.error){showToast(d.error,'error');return;}
+        if(myReq!==searchReqId){clearTimeout(loadTimer);if(qWrap)qWrap.classList.remove('loading');return;}
+        clearTimeout(loadTimer);
+        if(qWrap)qWrap.classList.remove('loading');
+        var d=null;
+        try{d=await r.json();}catch(parseErr){d=null;}
+        if(myReq!==searchReqId)return;
+        if(!r.ok || (d && d.error)){
+            var msg=(d && d.error)?d.error:('Error fetching (HTTP '+r.status+')');
+            showToast(msg,'error');
+            if(!allowEmpty || q){
+                resDiv.innerHTML='<div class="empty"><div class="empty-icon">&#9888;</div><p>'+msg+'</p></div>';
+                document.getElementById('pageBox').style.display='none';
+            }
+            return;
+        }
         document.getElementById('resInfo').style.display='none';
         if(!d.results||!d.results.length){
-            resDiv.innerHTML='<div class="empty"><div class="empty-icon">&#9888;</div><p>No titles found for "'+q+'"</p></div>';
+            resDiv.innerHTML = q
+                ? '<div class="empty"><div class="empty-icon">&#9888;</div><p>No titles found for "'+q+'"</p></div>'
+                : '<div class="empty"><div class="empty-icon">&#8981;</div><p>No files added yet.</p></div>';
             document.getElementById('pageBox').style.display='none';return;
         }
         var h='';
@@ -212,6 +234,7 @@ async function doSearch(o){
                 '</div>'+
             '</div>';
         });
+        resDiv.className='res-grid mode-'+pMode;
         resDiv.innerHTML=h;
         staggerCards(resDiv);
         nextOff=d.next_offset;
@@ -223,19 +246,38 @@ async function doSearch(o){
         if(nextOff) {
             fetch('/api/search?q='+encodeURIComponent(q)+'&offset='+nextOff+'&col='+curCol+'&mode='+pMode);
         }
-    }catch(e){showToast('Network error','error');}
+    }catch(e){clearTimeout(loadTimer);if(qWrap)qWrap.classList.remove('loading');showToast('Network error','error');}
 }
 
 function next(){if(nextOff){curPage++;doSearch(nextOff);scrollTo(0,0);}}
 function prev(){if(curPage>1){curPage--;doSearch(Math.max(0,curOff-LIMIT_VAL));scrollTo(0,0);}}
 
 document.addEventListener('DOMContentLoaded',function(){
-    var q=document.getElementById('q');if(q)q.addEventListener('keydown',function(e){if(e.key==='Enter')doSearch(0);});
+    var q=document.getElementById('q');
+    if(q){
+        var qLiveTimer;
+        q.addEventListener('input',function(){
+            clearTimeout(qLiveTimer);
+            var val=q.value.trim();
+            if(val.length<2){
+                searchReqId++;
+                curQ='';
+                var qw=document.getElementById('qWrap');if(qw)qw.classList.remove('loading');
+                var ri=document.getElementById('resInfo');if(ri)ri.style.display='none';
+                var pb=document.getElementById('pageBox');if(pb)pb.style.display='none';
+                doSearch(0,true);
+                return;
+            }
+            qLiveTimer=setTimeout(function(){doSearch(0);},350);
+        });
+        q.addEventListener('keydown',function(e){if(e.key==='Enter'){clearTimeout(qLiveTimer);doSearch(0);}});
+    }
     if(pMode==='none'){
         var mItems=document.querySelectorAll('#cddModeMenu .cdd-item');
         mItems.forEach(function(i){i.classList.remove('selected');if(i.dataset.val===pMode)i.classList.add('selected');});
         document.getElementById('cddModeLabel').textContent='\u26a1 Text Only (Fastest)';
     }
+    doSearch(0,true);
 });
 """.replace("__LIMIT_PLACEHOLDER__", str(MAX_WEB_RESULTS))
 
@@ -245,10 +287,10 @@ document.addEventListener('DOMContentLoaded',function(){
 SEARCH_ZONE = (
     '<div class="search-zone">'
         '<div class="search-row1">'
-            '<div class="search-wrap">'
+            '<div class="search-wrap" id="qWrap">'
                 '<input class="search-input" id="q" placeholder="Titles, people, genres\u2026">'
+                '<span class="search-spinner" id="qSpinner"></span>'
             '</div>'
-            '<button class="search-btn" id="searchBtn" onclick="doSearch(0);triggerRipple(this)">Search</button>'
         '</div>'
         '<div class="search-row2">'
             '<div class="cdd-wrap" id="cddColWrap">'
