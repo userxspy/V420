@@ -24,20 +24,20 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--txt);min-
 .sw:focus-within{border-color:var(--ac)}
 .si{flex:1;min-width:0;background:0 0;border:none;outline:none;color:var(--txt);caret-color:var(--ac);font-size:14px;font-weight:600;padding:6px 0;font-family:inherit;-webkit-tap-highlight-color:transparent}
 .si::placeholder{color:var(--mu);font-weight:400}
-.sb{flex-shrink:0;background:var(--ac);color:#fff;border:none;border-radius:12px;padding:0 18px;height:38px;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:.3px}
-.sb:active{transform:scale(.95)}
+.ssp{display:none;width:15px;height:15px;flex-shrink:0;border:2px solid var(--br);border-top-color:var(--ac);border-radius:50%;animation:ssSpin .6s linear infinite}
+.sw.loading .ssp{display:inline-block}
+@keyframes ssSpin{to{transform:rotate(360deg)}}
 
 /* filters / cdd */
-.fi{display:flex;gap:8px;white-space:nowrap;scrollbar-width:none;padding-bottom:16px;overflow:visible}
-.fi::-webkit-scrollbar{display:none}
-.cw{flex:0 1 auto;min-width:0;position:relative;user-select:none}
-.cb{background:var(--bg3);color:var(--txt);border:1.5px solid var(--br);border-radius:999px;padding:7px 28px 7px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:5px;white-space:nowrap;transition:border-color .15s;position:relative}
+.fi{display:flex;gap:8px;padding-bottom:16px;overflow:visible}
+.cw{flex:1;min-width:0;position:relative;user-select:none}
+.cb{width:100%;box-sizing:border-box;background:var(--bg3);color:var(--txt);border:1.5px solid var(--br);border-radius:999px;padding:8px 28px 8px 14px;font-size:11px;font-weight:700;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;justify-content:flex-start;gap:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:border-color .15s,box-shadow .15s;position:relative}
 .cb:active,.cb.open{border-color:var(--ac);box-shadow:0 0 0 3px rgba(229,9,20,.12)}
 .ca{position:absolute;right:12px;top:50%;transform:translateY(-50%);pointer-events:none;font-size:9px;color:var(--mu);transition:transform .2s}
 .cb.open .ca{transform:translateY(-50%) rotate(180deg)}
-.cm{position:fixed;min-width:160px;background:var(--bg4);border:1.5px solid var(--br);border-radius:16px;overflow:hidden;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,.55);animation:cddIn .15s ease;display:none}
-.cm.open{display:block}
-@keyframes cddIn{from{opacity:0;transform:translateX(-50%) translateY(-6px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
+.cm{position:fixed;min-width:160px;background:var(--bg4);border:1.5px solid var(--br);border-radius:16px;overflow:hidden;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,.55);display:none}
+.cm.open{display:block;animation:cddIn .15s ease}
+@keyframes cddIn{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
 .ci{display:flex;align-items:center;gap:10px;padding:12px 14px;font-size:13px;font-weight:700;color:var(--txt);cursor:pointer;transition:background .12s;border-bottom:1px solid var(--br)}
 .ci:last-child{border-bottom:none}
 .ci:active{background:var(--bg3)}
@@ -151,8 +151,7 @@ body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--txt);min-
 
   <div class="sz">
     <div class="sr">
-      <div class="sw"><input type="text" id="q" class="si" placeholder="Titles, genres, people…" enterkeyhint="search"></div>
-      <button class="sb" onclick="doSearch(0)">Search</button>
+      <div class="sw" id="qWrap"><input type="text" id="q" class="si" placeholder="Titles, genres, people…" enterkeyhint="search"><span class="ssp" id="qSpinner"></span></div>
     </div>
     <div class="fi">
       <div class="cw" id="cwCol">
@@ -215,6 +214,7 @@ const H={'X-Telegram-Init-Data':ID};
 
 // state
 let curQ='',curOff=0,nextOff='',curCol='all',curPage=1;
+let searchReqId=0;
 let pMode=localStorage.getItem('ff_mode')||'tg';
 let plyr=null,streamUrl='';
 
@@ -270,11 +270,11 @@ function setCdd(item,id,key){
   let val=item.dataset.val,lbl=item.childNodes[0].textContent.trim();
   Q1('#cl'+id).textContent=lbl;
   Q1('#cm'+id).classList.remove('open');Q1('#cb'+id).classList.remove('open');
-  if(key==='col'){curCol=val;if(curQ)doSearch(0);}
+  if(key==='col'){curCol=val;doSearch(0,true);}
   else{
     pMode=val;localStorage.setItem('ff_mode',val);
     Q1('#results').classList.toggle('mn',val==='none');
-    if(curQ)doSearch(curOff);
+    doSearch(curOff,true);
   }
 }
 document.addEventListener('click',e=>{
@@ -284,7 +284,19 @@ document.addEventListener('click',e=>{
 
 
 // video search
-Q1('#q').addEventListener('keydown',e=>{if(e.key==='Enter')doSearch(0);});
+let qLiveTimer;
+Q1('#q').addEventListener('input',()=>{
+  clearTimeout(qLiveTimer);
+  let val=Q1('#q').value.trim();
+  if(val.length<2){
+    searchReqId++;
+    let qw=Q1('#qWrap');if(qw)qw.classList.remove('loading');
+    doSearch(0,true);
+    return;
+  }
+  qLiveTimer=setTimeout(()=>{doSearch(0);},350);
+});
+Q1('#q').addEventListener('keydown',e=>{if(e.key==='Enter'){clearTimeout(qLiveTimer);doSearch(0);}});
 
 function showErr(type,extra=''){
   let icon='❌',title='Error',msg=extra;
@@ -304,23 +316,33 @@ function retryThumb(id){
   b.innerHTML=`<img src="/api/thumb?file_id=${id}&t=${Date.now()}" class="fp" onload="this.classList.add('on')" onerror="thumbErr('${id}')">`;
 }
 
-async function doSearch(off){
+async function doSearch(off,allowEmpty){
   let q=Q1('#q').value.trim();
-  if(!q)return toast('Kuch likho pehle!');
+  if(!q && !allowEmpty)return toast('Kuch likho pehle!');
   if(!ID)return showErr('init');
   curQ=q;curOff=off;if(!off)curPage=1;
-  state('#results','#pgBox','⏳','Searching...','');
-  tg.MainButton.setText('🔍 Searching...');tg.MainButton.show();tg.MainButton.showProgress();
+  if(q){sessionStorage.setItem('ff_ma_q',q);}else{sessionStorage.removeItem('ff_ma_q');}
+
+  let myReq=++searchReqId;
+  let qWrap=Q1('#qWrap');
+  let loadTimer=setTimeout(()=>{
+    if(myReq!==searchReqId)return;
+    qWrap.classList.add('loading');
+  },150);
+
   try{
     let r=await fetch(`/api/search?q=${encodeURIComponent(q)}&offset=${off}&col=${curCol}&mode=${pMode}`,{headers:H});
+    if(myReq!==searchReqId){clearTimeout(loadTimer);qWrap.classList.remove('loading');return;}
+    clearTimeout(loadTimer);
+    qWrap.classList.remove('loading');
     if(r.status===403)return showErr('auth');
     if(r.status===429)return showErr('rate');
     if(!r.ok)return showErr('generic','Error '+r.status);
     let d=await r.json();
+    if(myReq!==searchReqId)return;
     if(d.error){return showErr(d.error.includes('Unauthorized')?'auth':d.error.includes('fast')?'rate':'generic',d.error);}
     if(!d.results?.length){
-      tg.MainButton.hide();
-      state('#results','#pgBox','🔎','Kuch nahi mila',`"${esc(q)}" ke liye koi result nahi`);
+      state('#results','#pgBox','🔎', q?'Kuch nahi mila':'Abhi tak koi file nahi', q?`"${esc(q)}" ke liye koi result nahi`:'');
       return;
     }
     let h='';
@@ -337,8 +359,7 @@ async function doSearch(off){
     Q1('#pBtn').disabled=!off;Q1('#nBtn').disabled=!nextOff;
     Q1('#pgInfo').textContent='Page '+curPage;
     window.scrollTo({top:0,behavior:'smooth'});
-  }catch{showErr('generic','Connection fail. Dobara try karo.');}
-  finally{tg.MainButton.hideProgress();tg.MainButton.hide();}
+  }catch(e){if(myReq===searchReqId){qWrap.classList.remove('loading');showErr('generic','Connection fail. Dobara try karo.');}}
 }
 
 // player
@@ -383,6 +404,12 @@ function copyLink(){
 
 function next(){if(nextOff){curPage++;doSearch(nextOff);}}
 function prev(){if(curPage>1){curPage--;doSearch(Math.max(0,curOff-21));}}
+
+// initial load — restore last search this session, else show recent files
+if(ID){
+  let savedQ=sessionStorage.getItem('ff_ma_q');
+  if(savedQ){Q1('#q').value=savedQ;doSearch(0);}else{doSearch(0,true);}
+}
 
 
 </script>
