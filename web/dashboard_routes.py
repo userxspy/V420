@@ -149,6 +149,7 @@ async function doSearch(o,allowEmpty){
     var q=document.getElementById('q').value.trim();
     if(!q && !allowEmpty){showToast('Please enter a movie name','error');return;}
     curQ=q;curOff=o;if(o===0)curPage=1;
+    if(q){sessionStorage.setItem('ff_dash_q',q);}else{sessionStorage.removeItem('ff_dash_q');}
 
     var myReq=++searchReqId;
     var resDiv=document.getElementById('results');
@@ -277,7 +278,8 @@ document.addEventListener('DOMContentLoaded',function(){
         mItems.forEach(function(i){i.classList.remove('selected');if(i.dataset.val===pMode)i.classList.add('selected');});
         document.getElementById('cddModeLabel').textContent='\u26a1 Text Only (Fastest)';
     }
-    doSearch(0,true);
+    var savedQ=sessionStorage.getItem('ff_dash_q');
+    if(savedQ && q){q.value=savedQ;doSearch(0);}else{doSearch(0,true);}
 });
 """.replace("__LIMIT_PLACEHOLDER__", str(MAX_WEB_RESULTS))
 
