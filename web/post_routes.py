@@ -72,29 +72,39 @@ POST_WIZARD_CSS = '''
 POST_WIZARD_JS = '''
     <script>
     var videoSearchReqId = 0;
-    async function searchVideosForPost() {
+    var videoSearchOffset = '';
+    var videoSearchLastQ = '';
+    async function searchVideosForPost(loadMore) {
         const q = document.getElementById('videoSearchInput').value.trim();
         if(!q) { videoSearchReqId++; document.getElementById('videoSearchResults').style.display = 'none'; return; }
+        if(!loadMore) { videoSearchOffset = ''; videoSearchLastQ = q; }
         const myReq = ++videoSearchReqId;
         const resDiv = document.getElementById('videoSearchResults');
         const spinTimer = setTimeout(() => {
             if (myReq !== videoSearchReqId) return;
-            resDiv.style.display = 'block'; resDiv.innerHTML = '<div style="padding:15px; color:var(--muted); text-align:center; font-size:12px;">🔍 Searching...</div>';
+            if(!loadMore) { resDiv.style.display = 'block'; resDiv.innerHTML = '<div style="padding:15px; color:var(--muted); text-align:center; font-size:12px;">🔍 Searching...</div>'; }
         }, 200);
         try {
-            const response = await fetch('/api/search?q=' + encodeURIComponent(q) + '&mode=none');
+            const offParam = loadMore ? videoSearchOffset : 0;
+            const response = await fetch('/api/search?q=' + encodeURIComponent(q) + '&mode=none&offset=' + offParam);
             if (myReq !== videoSearchReqId) { clearTimeout(spinTimer); return; }
             clearTimeout(spinTimer);
             const data = await response.json();
             if (myReq !== videoSearchReqId) return;
             resDiv.style.display = 'block';
-            if(!data.results || data.results.length === 0) { resDiv.innerHTML = '<div style="padding:15px; color:var(--muted); text-align:center; font-size:12px;">❌ No files found.</div>'; return; }
+            const moreBtn = document.getElementById('videoSearchMoreBtn');
+            if(moreBtn) moreBtn.remove();
+            if(!loadMore && (!data.results || data.results.length === 0)) { resDiv.innerHTML = '<div style="padding:15px; color:var(--muted); text-align:center; font-size:12px;">❌ No files found.</div>'; return; }
             let html = '';
-            data.results.forEach(f => {
+            (data.results || []).forEach(f => {
                 const safeName = f.name.replace(/'/g, "\\\\'").replace(/"/g, "&quot;");
                 html += `<div style="padding:12px 15px; border-bottom:1px solid var(--border); cursor:pointer;" onmouseover="this.style.background='var(--bg2)'" onmouseout="this.style.background='transparent'" onclick="addVideoToPost('${f.file_id}', '${safeName}')"><div style="font-weight:700; font-size:13px; color:var(--text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${f.name}</div><div style="font-size:11px; color:var(--muted); margin-top:4px;">${f.size}</div></div>`;
             });
-            resDiv.innerHTML = html;
+            if(loadMore) { resDiv.insertAdjacentHTML('beforeend', html); } else { resDiv.innerHTML = html; }
+            videoSearchOffset = data.next_offset || '';
+            if(videoSearchOffset) {
+                resDiv.insertAdjacentHTML('beforeend', '<div id="videoSearchMoreBtn" style="padding:12px 15px; text-align:center; cursor:pointer; color:var(--accent); font-weight:700; font-size:12px;" onclick="searchVideosForPost(true)">⬇️ Show More</div>');
+            }
         } catch(e) { resDiv.innerHTML = '<div style="padding:15px; color:var(--accent); text-align:center;">⚠️ Error!</div>'; }
     }
     function addVideoToPost(fileId, fileName) {
