@@ -643,14 +643,6 @@ async def posts_directory_page(req):
     var postLiveTimer;
     document.getElementById('post_q').addEventListener('input', function() {{
         clearTimeout(postLiveTimer);
-        var val = this.value.trim();
-        if (!val) {{
-            postReqId++;
-            var row = document.getElementById('postSearchRow'); if (row) row.classList.remove('loading');
-            var g = document.getElementById('post_grid_container'); if (g) g.innerHTML = '';
-            var pb = document.getElementById('post_pg_box'); if (pb) pb.style.display = 'none';
-            return;
-        }}
         postLiveTimer = setTimeout(function() {{ resetPost(); searchPosts(); }}, 350);
     }});
     </script>'''
