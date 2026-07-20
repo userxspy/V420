@@ -63,6 +63,7 @@ async def ensure_indexes():
                 await col.create_index([("file_name", "text")], name=f"{name}_text")
             
             await col.create_index("file_name", name=f"{name}_filename_idx")
+            await col.create_index([("added_on", -1)], name=f"{name}_added_on_idx")
             logger.info(f"✅ Fast Search & Non-Bloated Indexes OK: {name}")
         except Exception as e:
             if "already exists" in str(e) or "IndexKeySpecsConflict" in str(e): pass
@@ -128,18 +129,13 @@ async def save_file(media, collection_type="primary"):
         file_type = type(media).__name__.lower()
         col = COLLECTIONS.get(collection_type, primary)
         
-        existing_doc = await col.find_one({"_id": file_id}, {"file_ref": 1, "thumb_url": 1, "caption": 1})
+        existing_doc = await col.find_one({"_id": file_id}, {"_id": 1})
         if existing_doc:
-            if existing_doc.get("file_ref") == media.file_id: return "dup"
-            old_thumb = existing_doc.get("thumb_url")
-            thumb_url = old_thumb if old_thumb and old_thumb != "NO_THUMB" else None
-        else:
-            thumb_url = None
+            return "dup"
 
         update_set = {"file_ref":  media.file_id, "file_name": f_name, "file_size": media.file_size, "file_type": file_type}
-        if thumb_url: update_set["thumb_url"] = thumb_url
 
-        update_payload = {"$set": update_set}
+        update_payload = {"$set": update_set, "$setOnInsert": {"added_on": time.time()}}
         unset_payload = {}
 
         if USE_CAPTION_FILTER and caption: update_set["caption"] = caption
@@ -326,27 +322,27 @@ async def get_search_results(query, max_results, offset=0, lang=None, collection
 # — सबसे नई अपलोड की गई फाइलें, ताकि पेज खाली ना लगे)
 # ─────────────────────────────────────────────────────────
 async def get_recent_files(max_results, offset=0, collection_type="all"):
-    proj = {"_id": 1, "file_name": 1, "file_size": 1, "file_type": 1, "file_ref": 1, "caption": 1, "thumb_url": 1}
+    proj = {"_id": 1, "file_name": 1, "file_size": 1, "file_type": 1, "file_ref": 1, "caption": 1, "thumb_url": 1, "added_on": 1}
 
     if collection_type == "all":
         take = offset + max_results + 1  # +1 ताकि has_more पता चल सके
         merged = []
         for col in (primary, cloud, archive):
-            cursor = col.find({}, proj).sort('_id', -1).limit(take)
+            cursor = col.find({}, proj).sort([('added_on', -1), ('_id', -1)]).limit(take)
             docs = await cursor.to_list(length=take)
             for doc in docs:
                 doc["file_id"] = doc["_id"]
                 doc["source_col"] = col.name.lower()
             merged.extend(docs)
 
-        merged.sort(key=lambda d: d["_id"], reverse=True)
+        merged.sort(key=lambda d: (d.get("added_on") or 0, str(d["_id"])), reverse=True)
         has_more = len(merged) > offset + max_results
         page = merged[offset: offset + max_results]
         next_offset = offset + max_results if has_more else ""
         return page, next_offset
 
     col = COLLECTIONS.get(collection_type, primary)
-    cursor = col.find({}, proj).sort('_id', -1).skip(offset).limit(max_results)
+    cursor = col.find({}, proj).sort([('added_on', -1), ('_id', -1)]).skip(offset).limit(max_results)
     docs = await cursor.to_list(length=max_results)
     for doc in docs:
         doc["file_id"] = doc["_id"]
